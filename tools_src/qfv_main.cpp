@@ -5,6 +5,10 @@
 //                                     rewrite sources with SVA lowered to monitors
 //   qfv check-sva   [opts] --module M --sva TEXT files...
 //                                     T0 for one new assertion inserted into module M
+//   qfv bmc         [opts] --top T [--reset-expr E] [--budget S] files...
+//   qfv bmc         --btor FILE [--budget S]
+//                                     bug hunt with the built-in incremental BMC;
+//                                     NDJSON events, BTOR2 witnesses for CEXs
 //
 // opts: --top T   -D NAME[=VAL]   -I DIR   --drop-unsupported   --vacuity-covers
 //
@@ -21,6 +25,9 @@
 #include "session.h"
 #include "slang/diagnostics/DiagnosticEngine.h"
 #include "slang/text/SourceManager.h"
+#include "engine/bmc.h"
+#include "engine/sim.h"
+#include "model/ts.h"
 #include "sva/lower.h"
 #include "sva/monitor.h"
 
@@ -37,6 +44,15 @@ struct Args {
     std::string sva;
     bool dropUnsupported = false;
     bool vacuityCovers = false;
+    // bmc
+    std::string btor;       // skip the SV flow and check this BTOR2 file
+    std::string witness;    // sim: BTOR2 witness to replay
+    std::string workDir;
+    std::string clock = "clk";
+    std::string resetExpr;  // JasperGold-style `reset -expression`
+    bool resetFree = false; // leave reset unconstrained after the first cycle
+    double budget = 600;
+    int maxDepth = 1 << 30;
 };
 
 [[noreturn]] void usage(const std::string& msg) {
@@ -77,12 +93,28 @@ Args parseArgs(int argc, char** argv) {
             a.dropUnsupported = true;
         else if (s == "--vacuity-covers")
             a.vacuityCovers = true;
+        else if (s == "--btor")
+            a.btor = next();
+        else if (s == "--witness")
+            a.witness = next();
+        else if (s == "--work")
+            a.workDir = next();
+        else if (s == "--clock")
+            a.clock = next();
+        else if (s == "--reset-expr")
+            a.resetExpr = next();
+        else if (s == "--reset-free")
+            a.resetFree = true;
+        else if (s == "--budget")
+            a.budget = std::stod(next());
+        else if (s == "--max-depth")
+            a.maxDepth = std::stoi(next());
         else if (s.rfind("-", 0) == 0)
             usage("unknown option " + s);
         else
             a.session.files.push_back(s);
     }
-    if (a.session.files.empty())
+    if (a.session.files.empty() && a.btor.empty())
         usage("no source files");
     return a;
 }
@@ -127,13 +159,23 @@ std::string commentOut(std::string_view text, const std::string& reason) {
     return r + "\n";
 }
 
-int cmdCompile(Session& session, const Args& args) {
-    if (args.outDir.empty())
-        usage("compile-sva needs -o DIR");
+struct CompileResult {
+    std::vector<std::string> files;
+    std::vector<DiagInfo> diags;
+    std::vector<sva::AssertionSite> sites;
+    int unsupported = 0;
+    double ms = 0;
+};
+
+/// Lowers every supported assertion to a monitor and writes rewritten sources
+/// to `outDir`. Unchanged files are referenced in place.
+CompileResult compileSva(Session& session, const std::string& outDir, bool dropUnsupported,
+                         bool vacuityCovers) {
+    CompileResult res;
     auto t0 = std::chrono::steady_clock::now();
     auto comp = session.compile();
-    auto diags = collectDiagnostics(*comp, session.sourceManager());
-    auto sites = sva::collectAssertions(*comp);
+    res.diags = collectDiagnostics(*comp, session.sourceManager());
+    res.sites = sva::collectAssertions(*comp);
     auto& sm = session.sourceManager();
 
     // Group text replacements by source buffer.
@@ -143,17 +185,16 @@ int cmdCompile(Session& session, const Args& args) {
     };
     std::map<uint32_t, std::vector<Repl>> repls;
     sva::MonitorOptions mo;
-    mo.vacuityCover = args.vacuityCovers;
-    int unsupported = 0;
-    for (auto& s : sites) {
+    mo.vacuityCover = vacuityCovers;
+    for (auto& s : res.sites) {
         auto r = s.replaceRange;
         if (s.supported) {
             repls[r.start().buffer().getId()].push_back(
                 {r.start().offset(), r.end().offset(), sva::emitMonitor(s.ir, mo)});
         }
         else {
-            unsupported++;
-            if (args.dropUnsupported) {
+            res.unsupported++;
+            if (dropUnsupported) {
                 auto src = sm.getSourceText(r.start().buffer());
                 auto orig = src.substr(r.start().offset(), r.end().offset() - r.start().offset());
                 repls[r.start().buffer().getId()].push_back(
@@ -162,17 +203,16 @@ int cmdCompile(Session& session, const Args& args) {
         }
     }
 
-    fs::create_directories(args.outDir);
-    std::vector<std::string> outFiles;
+    fs::create_directories(outDir);
     std::set<std::string> used;
     for (size_t i = 0; i < session.numTrees(); i++) {
-        auto text = std::string(session.sourceText(i));
         std::string path = session.options().files[i];
         uint32_t id = session.buffer(i).getId();
         if (!repls.count(id)) {
-            outFiles.push_back(path);
+            res.files.push_back(fs::absolute(path).string());
             continue;
         }
+        auto text = std::string(session.sourceText(i));
         auto& rs = repls[id];
         std::sort(rs.begin(), rs.end(), [](auto& a, auto& b) { return a.begin > b.begin; });
         for (auto& r : rs)
@@ -181,28 +221,36 @@ int cmdCompile(Session& session, const Args& args) {
         while (used.count(name))
             name = "_" + name;
         used.insert(name);
-        auto outPath = (fs::path(args.outDir) / name).string();
+        auto outPath = fs::absolute(fs::path(outDir) / name).string();
         std::ofstream(outPath) << text;
-        outFiles.push_back(outPath);
+        res.files.push_back(outPath);
     }
+    res.ms = msSince(t0);
+    return res;
+}
 
+int cmdCompile(Session& session, const Args& args) {
+    if (args.outDir.empty())
+        usage("compile-sva needs -o DIR");
+    auto res = compileSva(session, args.outDir, args.dropUnsupported, args.vacuityCovers);
+    bool ok = !hasErrors(res.diags) && (res.unsupported == 0 || args.dropUnsupported);
     JsonWriter w;
     w.beginObject()
         .field("command", "compile-sva")
-        .field("ms", msSince(t0))
-        .field("ok", !hasErrors(diags) && (unsupported == 0 || args.dropUnsupported))
-        .field("unsupported", unsupported);
+        .field("ms", res.ms)
+        .field("ok", ok)
+        .field("unsupported", res.unsupported);
     w.key("files").beginArray();
-    for (auto& f : outFiles)
+    for (auto& f : res.files)
         w.value(f);
     w.endArray();
     w.key("diagnostics");
-    writeDiagnostics(w, diags);
+    writeDiagnostics(w, res.diags);
     w.key("assertions");
-    writeAssertions(w, sites);
+    writeAssertions(w, res.sites);
     w.endObject();
     std::cout << w.str() << "\n";
-    return hasErrors(diags) || (unsupported && !args.dropUnsupported) ? 1 : 0;
+    return ok ? 0 : 1;
 }
 
 int cmdCheck(Session& session, const Args& args) {
@@ -284,11 +332,197 @@ int cmdCheck(Session& session, const Args& args) {
     return ok ? 0 : 1;
 }
 
+/// JasperGold-style reset: the reset expression holds in the first cycle, so the
+/// search starts from the reset state, and (unless --reset-free) stays inactive
+/// afterwards.
+std::string resetEnv(const Args& a) {
+    std::string s = "// Generated by qfv: reset -expression (" + a.resetExpr + ")\n"
+                    "module qfv_env (input clk, input rst_active);\n"
+                    "    reg first_cycle = 1'b1;\n"
+                    "    always @(posedge clk) first_cycle <= 1'b0;\n"
+                    "    always @(*) begin\n"
+                    "        if (first_cycle) assume (rst_active);\n";
+    if (!a.resetFree)
+        s += "        else assume (!rst_active);\n";
+    s += "    end\nendmodule\n\nbind " + a.session.top + " qfv_env qfv_env_inst (.clk(" +
+         a.clock + "), .rst_active(" + a.resetExpr + "));\n";
+    return s;
+}
+
+/// Yosys recipe: elaborate with slang, map memories to registers (the bit-level
+/// engine has no arrays yet), then SymbiYosys's formal prep, then BTOR2.
+std::string yosysScript(const Args& a, const std::vector<std::string>& files,
+                        const std::string& btorPath) {
+    std::string defs;
+    for (auto& d : a.session.defines)
+        defs += " -D " + d;
+    std::string incs;
+    for (auto& d : a.session.includeDirs)
+        incs += " -I " + d;
+    std::string srcs;
+    for (auto& f : files)
+        srcs += " " + f;
+    return "read_slang" + defs + incs + " --top " + a.session.top + srcs + "\n" +
+           "prep -top " + a.session.top + "\n"
+           "memory -nomap\nmemory_map\nopt_clean\n"
+           "async2sync\nchformal -assume -early\n"
+           "formalff -setundef -clk2ff -ff2anyinit -hierarchy\n"
+           "chformal -live -fair -cover -remove\nopt_clean\n"
+           "flatten\nsetundef -undriven -anyseq\nopt -fast\n"
+           "delete -output\ndffunmap\n"
+           "write_btor " + btorPath + "\n";
+}
+
+int cmdBmc(Session& session, const Args& args) {
+    auto t0 = std::chrono::steady_clock::now();
+    auto emit = [](JsonWriter& w) { std::cout << w.str() << "\n" << std::flush; };
+    std::string work = args.workDir.empty() ? "qfv_work" : args.workDir;
+    fs::create_directories(work);
+    std::string btor = args.btor;
+    double frontMs = 0;
+
+    if (btor.empty()) {
+        if (args.session.top.empty())
+            usage("bmc needs --top");
+        auto res = compileSva(session, work + "/src", /*dropUnsupported=*/true, false);
+        if (hasErrors(res.diags)) {
+            JsonWriter w;
+            w.beginObject().field("event", "error").field("stage", "elaborate");
+            w.key("diagnostics");
+            writeDiagnostics(w, res.diags);
+            w.endObject();
+            emit(w);
+            return 2;
+        }
+        {
+            JsonWriter w;
+            w.beginObject().field("event", "assertions").field("unsupported", res.unsupported);
+            w.key("assertions");
+            writeAssertions(w, res.sites);
+            w.endObject();
+            emit(w);
+        }
+        auto files = res.files;
+        if (!args.resetExpr.empty()) {
+            auto envPath = fs::absolute(fs::path(work) / "qfv_env.sv").string();
+            std::ofstream(envPath) << resetEnv(args);
+            files.push_back(envPath);
+        }
+        btor = fs::absolute(fs::path(work) / "model.btor").string();
+        auto ys = fs::path(work) / "model.ys";
+        std::ofstream(ys) << yosysScript(args, files, btor);
+        const char* yosysEnv = std::getenv("QFV_YOSYS");
+        std::string yosys = yosysEnv ? yosysEnv : "yosys";
+        std::string cmd = yosys + " -q -m slang -l " + (fs::path(work) / "yosys.log").string() +
+                          " -s " + ys.string() + " > /dev/null 2>&1";
+        if (std::system(cmd.c_str()) != 0) {
+            JsonWriter w;
+            w.beginObject()
+                .field("event", "error")
+                .field("stage", "yosys")
+                .field("log", (fs::path(work) / "yosys.log").string())
+                .endObject();
+            emit(w);
+            return 2;
+        }
+        frontMs = msSince(t0);
+    }
+
+    auto t1 = std::chrono::steady_clock::now();
+    TransitionSystem ts;
+    std::string err;
+    if (!loadBtor2(btor, ts, err)) {
+        JsonWriter w;
+        w.beginObject().field("event", "error").field("stage", "load").field("message", err).endObject();
+        emit(w);
+        return 2;
+    }
+    {
+        JsonWriter w;
+        w.beginObject()
+            .field("event", "model")
+            .field("btor", btor)
+            .field("frontend_ms", frontMs)
+            .field("load_ms", msSince(t1))
+            .field("inputs", uint64_t(ts.inputs.size()))
+            .field("latches", uint64_t(ts.latches.size()))
+            .field("ands", uint64_t(ts.aig.numAnds()))
+            .field("constraints", uint64_t(ts.constraints.size()));
+        w.key("properties").beginArray();
+        for (auto& p : ts.props)
+            w.value(p.name);
+        w.endArray().endObject();
+        emit(w);
+    }
+
+    BmcOptions bo;
+    bo.budgetSeconds = args.budget;
+    bo.maxDepth = args.maxDepth;
+    Bmc bmc(ts, bo);
+    int cexCount = 0;
+    auto results = bmc.run([&](size_t p, const PropResult& r) {
+        JsonWriter w;
+        w.beginObject()
+            .field("event", "result")
+            .field("property", ts.props[p].name)
+            .field("status", r.status)
+            .field("ms", r.ms);
+        if (r.cex) {
+            cexCount++;
+            auto path = (fs::path(work) / ("cex_" + std::to_string(p) + ".wit")).string();
+            std::ofstream(path) << btor2Witness(ts, p, *r.cex);
+            w.field("depth", r.cex->depth)
+                .field("length", r.cex->depth + 1)
+                .field("witness", fs::absolute(path).string());
+        }
+        else {
+            w.field("depth_reached", r.depthChecked).field("note", "bounded: not a proof");
+        }
+        w.endObject();
+        emit(w);
+    });
+    JsonWriter w;
+    w.beginObject()
+        .field("event", "summary")
+        .field("ms", msSince(t0))
+        .field("cex", cexCount)
+        .field("pass_bounded", int(results.size()) - cexCount)
+        .field("sat_vars", uint64_t(bmc.numVars()))
+        .field("sat_clauses", uint64_t(bmc.numClauses()))
+        .endObject();
+    emit(w);
+    return cexCount ? 1 : 0;
+}
+
+/// Replays a BTOR2 witness on our bit-blasted model; prints the reached bad
+/// properties in btorsim's format so the two can be compared directly.
+int cmdSim(const Args& args) {
+    TransitionSystem ts;
+    SimTrace trace;
+    std::string err;
+    if (!loadBtor2(args.btor, ts, err) || !parseWitness(args.witness, ts, trace, err)) {
+        std::cerr << "qfv: " << err << "\n";
+        return 2;
+    }
+    bool held = true;
+    auto bads = simulate(ts, trace, held);
+    std::cout << "reached bad state properties {";
+    for (size_t f = 0; f < bads.size(); f++)
+        for (size_t p : bads[f])
+            std::cout << " b" << p << "@" << f;
+    std::cout << " }\n" << (held ? "constraints always satisfied" : "constraint violated") << "\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     auto args = parseArgs(argc, argv);
     Session session(args.session);
+    if (args.command == "bmc" && !args.btor.empty())
+        return cmdBmc(session, args);
+    if (args.command == "sim")
+        return cmdSim(args);
     std::string err;
     if (!session.load(err)) {
         std::cerr << "qfv: " << err << "\n";
@@ -300,5 +534,7 @@ int main(int argc, char** argv) {
         return cmdCompile(session, args);
     if (args.command == "check-sva")
         return cmdCheck(session, args);
+    if (args.command == "bmc")
+        return cmdBmc(session, args);
     usage("unknown command " + args.command);
 }
