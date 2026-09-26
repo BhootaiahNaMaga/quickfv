@@ -6,8 +6,11 @@ FVEval it settled 98% of checked assertions without JasperGold, with zero wrong 
 
 JasperGold is built for engineers at a GUI: it reloads the design per edit and is expensive.
 QuickFV loads the design once and answers each new or edited assertion in about 1 ms (lint +
-compile into the loaded design). Bugs usually surface in under 1 ms of solver time. Every answer
-is independently certified: counterexamples are replayed, and proofs are checked by separate tools.
+compile into the loaded design). Bugs usually surface in under 1 ms of solver time. Every CEX and
+proof verdict is independently certified: counterexamples are replayed by btorsim before they are
+reported, and proofs are checked by separate tools; bounded "no CEX" answers are checkable with
+`--certify`. Certificates are about the emitted model: that the SVA and RTL were translated
+correctly is tested separately (the equivalence and regression suites).
 
 Full design: [`SPEC.md`](../SPEC.md). Case-study report: [`casestudy/m6_report`](../casestudy/m6_report/README.md).
 

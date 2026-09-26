@@ -224,8 +224,13 @@ bool parseSetupText(const std::string& text, const std::string& baseDir, const s
                 for (size_t k = 1; k < w.size(); k++) {
                     if (w[k] == "-expression" && k + 1 < w.size())
                         cfg.resetExpr = w[++k];
-                    else if (w[k] == "-cycles" && k + 1 < w.size()) // QuickFV extension
-                        cfg.resetCycles = std::stoi(w[++k]);
+                    else if (w[k] == "-cycles" && k + 1 < w.size()) { // QuickFV extension
+                        auto& n = w[++k];
+                        if (n.empty() || n.size() > 3 || n.find_first_not_of("0123456789") != std::string::npos ||
+                            std::stoi(n) < 1 || std::stoi(n) > 255)
+                            throw ParseError{line, "reset -cycles must be an integer from 1 to 255, got '" + n + "'"};
+                        cfg.resetCycles = std::stoi(n);
+                    }
                     else if (w[k][0] == '-')
                         throw ParseError{line, "reset: unsupported option " + w[k]};
                     else
@@ -253,11 +258,14 @@ bool parseSetupText(const std::string& text, const std::string& baseDir, const s
             else if (cmd == "set_prove_time_limit") {
                 need(2);
                 cfg.timeLimitSeconds = parseTime(w[1], line);
+                cfg.timeLimitSet = true;
             }
             else if (cmd == "prove") {
                 for (size_t k = 1; k < w.size(); k++)
-                    if (w[k] == "-time_limit" && k + 1 < w.size())
+                    if (w[k] == "-time_limit" && k + 1 < w.size()) {
                         cfg.timeLimitSeconds = parseTime(w[++k], line);
+                        cfg.timeLimitSet = true;
+                    }
                 cfg.prove = true;
             }
             else {

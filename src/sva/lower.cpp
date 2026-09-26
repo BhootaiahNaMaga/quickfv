@@ -403,9 +403,11 @@ std::string labelOf(const syntax::SyntaxNode* member) {
 }
 
 struct Collector : public ASTVisitor<Collector, VisitFlags::Statements> {
-    Collector(Compilation& comp) : sm(*comp.getSourceManager()) {}
+    Collector(Compilation& comp, bool perInstance) : sm(*comp.getSourceManager()), perInstance(perInstance) {}
 
     const SourceManager& sm;
+    bool perInstance;
+    std::map<const syntax::SyntaxNode*, std::vector<size_t>> instancesOf; // perInstance: sites per directive
     std::vector<AssertionSite> sites;
     std::map<const syntax::SyntaxNode*, size_t> bySyntax;   // dedupe across instances
     std::map<std::string, int> unlabeledCount;
@@ -465,6 +467,14 @@ struct Collector : public ASTVisitor<Collector, VisitFlags::Statements> {
             }
         }
 
+        if (perInstance) {
+            auto& same = instancesOf[key];
+            same.push_back(sites.size());
+            sites.push_back(std::move(site));
+            for (size_t i : same)
+                sites[i].numInstances = int(same.size());
+            return;
+        }
         auto it = bySyntax.find(key);
         if (it == bySyntax.end()) {
             bySyntax[key] = sites.size();
@@ -489,8 +499,8 @@ struct Collector : public ASTVisitor<Collector, VisitFlags::Statements> {
 
 } // namespace
 
-std::vector<AssertionSite> collectAssertions(Compilation& compilation) {
-    Collector collector(compilation);
+std::vector<AssertionSite> collectAssertions(Compilation& compilation, bool perInstance) {
+    Collector collector(compilation, perInstance);
     compilation.getRoot().visit(collector);
     return std::move(collector.sites);
 }

@@ -31,6 +31,7 @@ struct SetupConfig {
     int resetCycles = 1; // `reset -cycles N` (QuickFV extension)
     std::vector<SetupProperty> properties;
     double timeLimitSeconds = 600;
+    bool timeLimitSet = false; // set_prove_time_limit / prove -time_limit given
     bool prove = false;
 };
 

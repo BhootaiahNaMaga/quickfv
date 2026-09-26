@@ -6,12 +6,18 @@ enough, and trustworthily enough, that JasperGold only sees what really needs it
 **Answer from this study:**
 - **98% of the assertions checked were settled without JasperGold** (PROVEN or VACUOUS, both
   certified), plus CEXs whose root cause the agent identified.
-- **Zero wrong verdicts reached a result.** Every CEX was independently certified, and every
-  proof was checked by Certifaiger.
+- **Zero wrong verdicts reached a result** in this sample. Every CEX was independently certified,
+  and every proof was checked by Certifaiger.
 - The per-assertion feedback loop runs in about **1 ms** (lint + compile into the loaded design),
   and the first CEX typically arrives in **under 1 ms**.
 - The study also found **one soundness bug in QuickFV** (fixed, and every result re-established)
   and **several problems in the benchmark itself**.
+
+> **Later review (2026-09-26).** [`PROJECT_REVIEW.md`](../../PROJECT_REVIEW.md) found wrong verdicts in
+> paths this sample did not exercise: an assertion failing in the initial state reported `VACUOUS`,
+> only one instance of a repeated module checked, out-of-range selects read as 0 in the session, and
+> an uncertified trace still reported `CEX`. All are fixed with regression tests (`tests/regress`).
+> The numbers here are from before those fixes and were not re-run.
 
 Everything here is reproducible: the scripts are in this directory, and the raw data is in
 `*.json` / `agent_log.jsonl`.

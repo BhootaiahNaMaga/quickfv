@@ -77,3 +77,23 @@ target_compile_options(qfv_core PRIVATE -Wall -Wextra)
 
 add_executable(qfv tools_src/qfv_main.cpp tools_src/server.cpp)
 target_link_libraries(qfv PRIVATE qfv_core)
+
+# Tests (they drive build/qfv and the tools from scripts/setup_tools.sh):
+#   ctest -L fast          regressions and the bit-blaster check (about 2 min)
+#   ctest -L integration   session/flow equivalence, SVA oracles, MCP loop, Tcl package
+# A test whose oracle tools are missing reports "skipped" (exit 77), never "passed".
+enable_testing()
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_program(TCLSH tclsh)
+function(qfv_test name label)
+  add_test(NAME ${name} COMMAND ${ARGN} WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  set_tests_properties(${name} PROPERTIES LABELS ${label} SKIP_RETURN_CODE 77)
+endfunction()
+qfv_test(regress fast ${Python3_EXECUTABLE} tests/regress/run_regress.py)
+qfv_test(bitblast fast ${Python3_EXECUTABLE} tests/bitblast/run_ops.py)
+qfv_test(session_equiv integration ${Python3_EXECUTABLE} tests/session_equiv/run_session_equiv.py)
+qfv_test(sva_equiv integration ${Python3_EXECUTABLE} tests/sva_equiv/run_equiv.py)
+qfv_test(mcp_agent_loop integration ${Python3_EXECUTABLE} tests/mcp_agent_loop.py)
+if(TCLSH)
+  qfv_test(tcl_smoke integration ${TCLSH} tests/tcl_smoke.tcl)
+endif()

@@ -4,8 +4,8 @@
 #include <cstdlib>
 #include <future>
 #include <memory>
-#include <sys/wait.h>
 
+#include "engine/external.h"
 #include "engine/randsim.h"
 #include "engine/unroll.h"
 
@@ -119,14 +119,18 @@ std::vector<Verdict> Hunt::run(const Event& onEvent) {
     };
 
     // 0. Cheap vacuity pre-pass (k <= 1): constant or near-constant triggers
-    //    are reported in milliseconds, before anything else runs.
+    //    are reported in milliseconds, before anything else runs. Induction at
+    //    k is sound only if every base case 0..k is UNSAT: once a frame is
+    //    reachable (or unknown), the goal leaves the pre-pass for sim/BMC.
+    std::vector<bool> basesUnsat(n, true);
     for (int k = 0; k <= 1; k++)
         for (size_t p = 0; p < n; p++) {
-            if (done[p] || ts.props[p].kind != Kind::Reach)
+            if (done[p] || !basesUnsat[p] || ts.props[p].kind != Kind::Reach)
                 continue;
-            int res = bmc.solve({bmc.lit(k, ts.props[p].bad)});
-            if (res != 20)
-                continue; // reachable (sim/BMC will report the witness) or out of time
+            if (bmc.solve({bmc.lit(k, ts.props[p].bad)}) != 20) {
+                basesUnsat[p] = false;
+                continue;
+            }
             v[p].depthChecked = k;
             tryInduction(p, k);
         }
@@ -188,8 +192,10 @@ std::vector<Verdict> Hunt::run(const Event& onEvent) {
                 onEvent(p, r);
             }
             else if (ev.kind == ExternalVerdict::Holds && !done[p]) {
-                if (isAssert && !ev.certified) {
-                    r.detail = ev.detail; // an uncertified proof is never reported as PROVEN
+                if (!ev.certified) {
+                    // An uncertified proof is never reported: not as PROVEN, and
+                    // not as UNREACHABLE (which would settle its assertion VACUOUS).
+                    r.detail = ev.detail;
                     continue;
                 }
                 r.status = isAssert ? "PROVEN" : "UNREACHABLE";
@@ -287,25 +293,21 @@ std::vector<CertReport> certifyBounded(const std::string& dir, size_t bmcClaims,
     std::vector<CertReport> out;
     const char* env = std::getenv("QFV_LIDRUP_CHECK");
     std::string tool = env ? env : "lidrup-check";
+    std::atomic<bool> never{false};
     for (auto [name, claims] : {std::pair{"bmc", bmcClaims}, std::pair{"step", stepClaims}}) {
         CertReport r;
         r.solver = name;
         r.unsatClaims = claims;
-        std::string cmd = tool + " -q " + dir + "/" + name + ".icnf " + dir + "/" + name + ".lidrup 2>&1";
-        std::string output;
-        if (FILE* p = popen(cmd.c_str(), "r")) {
-            char buf[512];
-            while (fgets(buf, sizeof buf, p))
-                output += buf;
-            int st = pclose(p);
-            int code = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
-            if (code == 0)
-                r.result = "verified";
-            else if (code == 127)
-                r.result = "unavailable (lidrup-check not found)";
-            else
-                r.result = "FAILED: " + output.substr(0, 300);
-        }
+        std::string base = dir + "/" + name;
+        auto p = runProcess({tool, "-q", base + ".icnf", base + ".lidrup"}, Clock::now() + std::chrono::hours(1), never);
+        if (p.output.rfind("qfv: cannot start", 0) == 0)
+            r.result = "unavailable (lidrup-check not found)";
+        else if (!p.finished)
+            r.result = "FAILED: lidrup-check did not finish";
+        else if (p.exitCode == 0)
+            r.result = "verified";
+        else
+            r.result = "FAILED: " + p.output.substr(0, 300);
         out.push_back(r);
     }
     return out;

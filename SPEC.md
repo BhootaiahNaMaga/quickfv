@@ -77,6 +77,8 @@ early failure.
 SYNTAX_ERROR | TYPE_ERROR | UNSUPPORTED        (T0)
 VACUOUS | POSSIBLY_VACUOUS | TRIVIALLY_*       (T1)  POSSIBLY_VACUOUS = no witness within budget
 CEX                                            (T2)  always carries a replay-verified trace
+CEX_UNCONFIRMED                                (T2)  a trace btorsim could not replay (unavailable,
+                                                     timeout or disagreement): inconclusive, never a CEX
 PASS_BOUNDED                                   (T2)  lint-clean ∧ reachable ∧ no CEX in budget
 PROVEN                                         (M5)  portfolio IC3 (rIC3), witness circuit verified by Certifaiger
 ERROR                                                internal failure; never reported as a pass

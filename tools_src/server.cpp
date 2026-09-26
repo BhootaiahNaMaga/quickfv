@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <regex>
+#include <stdexcept>
 
 #include "session/design_session.h"
 #include "session/setup_file.h"
@@ -28,6 +29,21 @@ std::string normalizeSva(const std::string& text, const std::string& kind, const
     std::string dis = disable.empty() ? "" : "disable iff (" + disable + ") ";
     return label + ": " + kind + " property (@(posedge " + clock + ") " + dis + text + ");";
 }
+
+/// A numeric request parameter, checked against [lo, hi].
+double number(const json& p, const char* key, double def, double lo, double hi) {
+    if (!p.contains(key))
+        return def;
+    if (!p[key].is_number())
+        throw std::invalid_argument(std::string("'") + key + "' must be a number");
+    double v = p[key];
+    if (!(v >= lo && v <= hi))
+        throw std::invalid_argument(std::string("'") + key + "' must be in [" + std::to_string(lo) + ", " +
+                                    std::to_string(hi) + "]");
+    return v;
+}
+
+constexpr double kMaxBudgetS = 7 * 24 * 3600.0;
 
 class Handler {
 public:
@@ -51,8 +67,14 @@ public:
             if (cfg.files.empty() || cfg.top.empty())
                 return {{"ok", false}, {"error", "load needs setup_file, or files + top"}};
         }
-        clock = cfg.clock;
-        return session.load(cfg);
+        auto r = session.load(cfg);
+        if (r.value("ok", false)) {
+            clock = cfg.clock;
+            // The setup file's time limit is the default check budget.
+            defaultBudget = cfg.timeLimitSet ? std::min(cfg.timeLimitSeconds, kMaxBudgetS) : 30.0;
+            r["default_budget_s"] = defaultBudget;
+        }
+        return r;
     }
 
     json add(const json& p, const std::string& kind) {
@@ -65,11 +87,13 @@ public:
         std::vector<std::string> ids;
         for (auto& i : p.value("ids", json::array()))
             ids.push_back(i);
-        return session.check(ids, p.value("budget_s", 30.0), p.value("sim_s", 0.25), emit, p.value("certify", false));
+        return session.check(ids, number(p, "budget_s", defaultBudget, 0, kMaxBudgetS), number(p, "sim_s", 0.25, 0, kMaxBudgetS),
+                             emit, p.value("certify", false));
     }
 
     /// Agent loop in one call: lint + add + check the new assertion(s).
     json checkAssertion(const json& p, const DesignSession::Emit& emit) {
+        double budget = number(p, "budget_s", defaultBudget, 0, kMaxBudgetS), sim = number(p, "sim_s", 0.25, 0, kMaxBudgetS);
         auto added = add(p, "assert");
         json out = {{"lint", added}};
         std::vector<std::string> ids;
@@ -81,7 +105,7 @@ public:
             return out;
         }
         json events = json::array();
-        auto res = session.check(ids, p.value("budget_s", 30.0), p.value("sim_s", 0.25), [&](const json& e) {
+        auto res = session.check(ids, budget, sim, [&](const json& e) {
             events.push_back(e);
             emit(e);
         }, p.value("certify", false));
@@ -129,6 +153,7 @@ public:
 private:
     DesignSession session;
     std::string clock = "clk";
+    double defaultBudget = 30;
 };
 
 json toolSchema(const std::string& name, const std::string& desc, json props, json required) {
@@ -141,7 +166,8 @@ json mcpTools() {
     json sva = {{"type", "string"},
                 {"description", "SVA: a full directive 'label: assert property (@(posedge clk) ...);' or a bare "
                                 "property like 'req |=> ##[1:3] ack' (clocked on the design clock)"}};
-    json budget = {{"type", "number"}, {"description", "time budget in seconds (default 30)"}};
+    json budget = {{"type", "number"},
+                   {"description", "time budget in seconds (default: the setup file's time limit, else 30)"}};
     return json::array({
         toolSchema("load_design",
                    "Load an RTL design once (Yosys runs only here). Give a JasperGold-style setup file "
@@ -195,6 +221,18 @@ json mcpTools() {
     });
 }
 
+/// Checks a request envelope: an object with a string `method` and, if
+/// present, object `params` (field `paramsKey`). Returns an error message or "".
+std::string envelopeError(const json& req, const char* methodKey, const char* paramsKey) {
+    if (!req.is_object())
+        return "request must be a JSON object";
+    if (!req.contains(methodKey) || !req[methodKey].is_string())
+        return std::string("'") + methodKey + "' must be a string";
+    if (req.contains(paramsKey) && !req[paramsKey].is_object())
+        return std::string("'") + paramsKey + "' must be an object";
+    return "";
+}
+
 } // namespace
 
 int runServe(const std::string& workDir) {
@@ -211,11 +249,15 @@ int runServe(const std::string& workDir) {
             std::cout << json{{"error", std::string("bad JSON: ") + e.what()}}.dump() << std::endl;
             continue;
         }
-        auto id = req.value("id", json());
+        json id = req.is_object() && req.contains("id") ? req["id"] : json();
         auto emit = [&](const json& ev) { std::cout << json{{"id", id}, {"event", ev}}.dump() << std::endl; };
         json result;
+        // Nothing a client sends may end the session: every error is a response.
         try {
-            result = h.dispatch(req.value("method", ""), req.value("params", json::object()), emit);
+            if (auto bad = envelopeError(req, "method", "params"); !bad.empty())
+                result = {{"ok", false}, {"error", "bad request: " + bad}};
+            else
+                result = h.dispatch(req["method"], req.value("params", json::object()), emit);
         }
         catch (const std::exception& e) {
             result = {{"ok", false}, {"error", e.what()}};
@@ -240,11 +282,22 @@ int runMcp(const std::string& workDir) {
             send({{"jsonrpc", "2.0"}, {"id", nullptr}, {"error", {{"code", -32700}, {"message", "parse error"}}}});
             continue;
         }
-        if (!req.contains("id"))
+        if (req.is_object() && !req.contains("id"))
             continue; // notification (e.g. notifications/initialized)
-        auto id = req["id"];
-        std::string method = req.value("method", "");
+        json id = req.is_object() ? req["id"] : json();
+        if (auto bad = envelopeError(req, "method", "params"); !bad.empty()) {
+            send({{"jsonrpc", "2.0"}, {"id", id}, {"error", {{"code", -32600}, {"message", "invalid request: " + bad}}}});
+            continue;
+        }
+        std::string method = req["method"];
         json params = req.value("params", json::object());
+        if (method == "tools/call" &&
+            ((params.contains("name") && !params["name"].is_string()) ||
+             (params.contains("arguments") && !params["arguments"].is_object()))) {
+            send({{"jsonrpc", "2.0"}, {"id", id},
+                  {"error", {{"code", -32602}, {"message", "tools/call needs a string 'name' and object 'arguments'"}}}});
+            continue;
+        }
         if (method == "initialize") {
             send({{"jsonrpc", "2.0"},
                   {"id", id},
@@ -255,8 +308,9 @@ int runMcp(const std::string& workDir) {
                     {"instructions",
                      "QuickFV: fast formal pre-checks before JasperGold. load_design once, then "
                      "check_assertion per assertion (T0 lint, vacuity, bug hunt). PASS_BOUNDED means no CEX "
-                     "within the budget, not a proof; VACUOUS means the trigger can never fire; every CEX "
-                     "is replay-certified by btorsim."}}}});
+                     "within the budget, not a proof; VACUOUS means the trigger can never fire; CEX is "
+                     "reported only after btorsim replays the trace (CEX_UNCONFIRMED: it could not, "
+                     "inconclusive). A module assertion gets one verdict per instance (u1.P, u2.P)."}}}});
         }
         else if (method == "ping") {
             send({{"jsonrpc", "2.0"}, {"id", id}, {"result", json::object()}});

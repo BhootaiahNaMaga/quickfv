@@ -22,8 +22,8 @@ struct Location {
     size_t column = 0;
 };
 
-/// One concurrent assertion directive found in the design (deduplicated across
-/// instances of the same module).
+/// One concurrent assertion directive found in the design: one per directive
+/// (deduplicated across instances of the same module), or one per instance.
 struct AssertionSite {
     std::string label;      // label as written, or "" if unlabeled
     std::string directive;  // assert / assume / cover / restrict / expect
@@ -37,10 +37,15 @@ struct AssertionSite {
     AssertionIR ir;         // valid when supported
     const slang::ast::ConcurrentAssertionStatement* stmt = nullptr;
     std::string instancePath; // hierarchical path below the top ("" = top itself)
+    int numInstances = 1;     // instances of the containing module that have this directive
 };
 
 /// Collects and lowers every concurrent assertion in an elaborated compilation.
-std::vector<AssertionSite> collectAssertions(slang::ast::Compilation& compilation);
+/// perInstance = false: one site per directive, for rewriting source text once
+/// (every instance of the module then gets the rewritten monitor).
+/// perInstance = true: one site per instance, each bound to that instance's
+/// signals, for emitting monitors into an already elaborated model.
+std::vector<AssertionSite> collectAssertions(slang::ast::Compilation& compilation, bool perInstance = false);
 
 Location toLocation(const slang::SourceManager& sm, slang::SourceLocation loc);
 

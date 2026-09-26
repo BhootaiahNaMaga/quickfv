@@ -438,8 +438,10 @@ private:
     }
     Bits rotate(Bits a, const Bits& amt, bool left) {
         size_t n = a.size();
-        for (size_t s = 0; s < amt.size() && s < 63; s++) {
-            size_t dist = (size_t(1) << s) % n;
+        // Amount bit s rotates by 2^s mod n; every bit counts (for widths that
+        // are not powers of two, high bits still change the result).
+        size_t dist = 1 % n;
+        for (size_t s = 0; s < amt.size(); s++, dist = (2 * dist) % n) {
             Bits rot(n);
             for (size_t i = 0; i < n; i++)
                 rot[i] = left ? a[(i + n - dist) % n] : a[(i + dist) % n];

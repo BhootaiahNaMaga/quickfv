@@ -1,11 +1,13 @@
 #include "engine/external.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <signal.h>
 #include <spawn.h>
 #include <sstream>
+#include <stdexcept>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -79,6 +81,58 @@ ProcessResult runProcess(const std::vector<std::string>& argv,
     r.output = ss.str();
     std::remove(tmpl.data());
     return r;
+}
+
+std::string dollarFreePath(const std::string& path, const std::string& cwd, bool isDir) {
+    if (path.find('$') == std::string::npos)
+        return path;
+    namespace fs = std::filesystem;
+    auto abs = fs::absolute(path).lexically_normal();
+    if (abs.filename().string().find('$') != std::string::npos)
+        throw std::runtime_error("'" + path + "': '$' in a file or directory name is not supported");
+    auto dir = isDir ? abs : abs.parent_path();
+    auto rel = fs::path("links") / ("qfv_dir_" + std::to_string(std::hash<std::string>{}(dir.string())));
+    fs::create_directories(fs::path(cwd) / "links");
+    std::error_code ec;
+    if (!fs::is_symlink(fs::path(cwd) / rel, ec))
+        fs::create_directory_symlink(dir, fs::path(cwd) / rel);
+    return isDir ? rel.string() : (rel / abs.filename()).string();
+}
+
+std::string writeSlangArgsFile(const std::string& path, const std::vector<std::string>& args) {
+    std::ofstream out(path);
+    if (!out)
+        return "cannot write " + path;
+    for (auto& a : args) {
+        if (a.find_first_of("\"\n\r") != std::string::npos)
+            return "cannot pass '" + a + "' to slang: quotes and newlines are not supported in paths or defines";
+        out << '"' << a << "\"\n";
+    }
+    return out ? "" : "cannot write " + path;
+}
+
+std::string replayBtorsim(const std::string& model, const std::string& witness, size_t bad, int depth,
+                          std::chrono::seconds timeout, std::string* log) {
+    const char* env = std::getenv("QFV_BTORSIM");
+    std::atomic<bool> never{false};
+    auto r = runProcess({env ? env : "btorsim", "-v", "-c", model, witness},
+                        std::chrono::steady_clock::now() + timeout, never);
+    if (log)
+        *log = r.output;
+    if (r.output.rfind("qfv: cannot start", 0) == 0)
+        return "unavailable";
+    if (!r.finished)
+        return "timeout";
+    // btorsim exits 0 even on a malformed witness: the report must be there too.
+    auto pos = r.output.find("reached bad state properties {");
+    if (r.exitCode != 0 || pos == std::string::npos)
+        return "not-reproduced";
+    auto end = r.output.find('}', pos);
+    if (end == std::string::npos)
+        return "not-reproduced";
+    auto reached = " " + r.output.substr(pos + 30, end - pos - 30) + " ";
+    auto want = " b" + std::to_string(bad) + "@" + std::to_string(depth) + " ";
+    return reached.find(want) != std::string::npos ? "confirmed" : "not-reproduced";
 }
 
 bool writeSingleBadBtor2(const std::string& in, const std::string& out, int64_t badId) {
