@@ -1,6 +1,6 @@
 # QuickFV — Agent-First Formal Pre-Check Engine
 
-**Status:** Draft v0.2 · 2026-09-25 (updated with M0 findings, see `casestudy/m0_fifo/README.md`)
+**Status:** Draft v0.3 · 2026-09-25 (M0 and M1 done; see `casestudy/m0_fifo/README.md`, `tests/sva_equiv/README.md`)
 **Working name:** `qfv` (CLI / daemon: `qfvd`)
 
 ---
@@ -293,7 +293,7 @@ Each milestone ends with a check against the oracles before the next one starts.
 | # | Deliverable | Exit criteria |
 |---|---|---|
 | **M0** ✅ | OSS CAD Suite (Yosys, slang, SymbiYosys, ABC, rIC3, Pono, Verilator) + EBMC 6.0 built from source. FVEval `fifo_1r1w` model on a hand-written DUT with 4 injected bugs, through 5 engines, with CEX replay (`casestudy/m0_fifo`) | Done: 0 disagreements; 16/16 CEXs replay-confirmed on the original RTL; walkthrough in `casestudy/m0_fifo/README.md`. Linux container deferred to M5 |
-| **M1** | Session skeleton plus **SVA compiler** (slang → NFA → monitor, emitted as Verilog for inspection) plus **T0 lint** | Every v1-subset construct matches EBMC on the equivalence tests; T0 < 100 ms; rejects outside the subset carry locations |
+| **M1** ✅ | Session skeleton plus **SVA compiler** (slang → NFA → monitor, emitted as Verilog for inspection) plus **T0 lint** | Done: `qfv lint`/`compile-sva`/`check-sva`. 68/71 equivalence cases pass and 0 fail, against three oracles (EBMC, Verilator, hand-derived golden tests), because EBMC and Verilator each deviate from IEEE 1800 on `disable iff` and ranged sequences (`tests/sva_equiv/README.md`). T0 check of a new assertion: 0.2–3 ms. Compiled FIFO monitors reproduce the M0 results exactly |
 | **M2** | Model IR, BTOR2 loading, bit-blaster, **incremental BMC** with activation literals | The same CEX depth as rIC3 BMC on all NL2SVA-Human mutants; adding an assertion never reloads the design |
 | **M3** | **T1** reachability, random simulator, CEX outputs (VCD/JSON/testbench), **RTL replay certification** | 100% of CEXs replay on the RTL; `VACUOUS` detected on every vacuity injection |
 | **M4** | JSON CLI with streaming, Tcl setup interpreter, Tcl package, MCP server, `export-jg` | An agent completes the case-study loop only through MCP |
@@ -302,7 +302,7 @@ Each milestone ends with a check against the oracles before the next one starts.
 | **v2** | k-induction (`PROVEN`) with Certifaiger, simulation-seeded BMC, SVA v1.1 constructs, liveness via liveness-to-safety, Lean-verified unroller, word-level solving (Bitwuzla) | — |
 
 ## 12. Tech stack and packaging
-- **Language:** C++17 core (CMake). Tcl 8.6 embedded for setup files. MCP server in Python (thin) or C++.
+- **Language:** C++20 core (CMake; slang requires C++20). Tcl 8.6 embedded for setup files. MCP server in Python (thin) or C++.
 - **Dependencies:** slang (MIT), CaDiCaL (MIT), Btor2Tools (MIT), Yosys + sv-elab (ISC), Tcl (BSD),
   nlohmann/json (MIT). Oracles and portfolio run as external processes, so their licenses stay separate.
 - **Packaging:** an OCI container (Docker/Apptainer) for the work server; a static `qfvd` binary
@@ -319,7 +319,7 @@ Each milestone ends with a check against the oracles before the next one starts.
 | Memories bit-blast too large | BTOR2 arrays → lazy memory encoding (v1.1); size limits reported |
 | A bounded "pass" read as meaningful for liveness (M0: EBMC reports false liveness properties as "PROVED up to bound 20") | Liveness is `UNSUPPORTED` in v1; v2 requires lasso or liveness-to-safety with a CEX-capable engine |
 | rIC3 license ambiguity (BSD-3 vs GPL-3) | Invoke it only as an external process; resolve before any bundling |
-| SVA semantic bugs in our compiler | EBMC differential tests, RTL replay on every trace, property-based fuzzing of sequences |
+| SVA semantic bugs in our compiler | Three oracles: EBMC bidirectional bounded equivalence, Verilator random differential, hand-derived golden tests; RTL replay on every trace. **The reference tools themselves deviate from the LRM** (M1: EBMC on mid-attempt `disable iff`; Verilator on failure timing and ranged antecedents), so disagreements are resolved against the LRM, not against a tool |
 | `PASS_BOUNDED` read as "proven" by agents | The verdict name, depth and the "not a proof" flag are always in the JSON; the MCP tool description states it |
 
 ## 14. Glossary

@@ -1,0 +1,13 @@
+# Each must be rejected by qfv (UNSUPPORTED), never approximated.
+a |-> s_eventually b
+a |-> strong(##[0:$] b)
+a |-> ##[1:$] b
+a[*2] |-> b
+a |-> b[->1]
+(a |-> b) and (c |-> d)
+a |-> (b |-> c)
+not (a ##1 b)
+a |-> nexttime b
+(a ##1 b) or (c ##1 d)
+a |-> (b throughout c ##1 d)
+a |-> first_match(b ##[1:2] c)
