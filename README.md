@@ -5,7 +5,9 @@ A fast, agent-first formal pre-check for SystemVerilog assertions, run **before*
 - a vacuity check (can the trigger ever fire?);
 - a time-bounded bug hunt, with every counterexample independently certified.
 
-The full design is in [`SPEC.md`](SPEC.md).
+The full design is in [`SPEC.md`](SPEC.md); a one-page summary of what was built and measured is in
+[`docs/SUMMARY.md`](docs/SUMMARY.md), and the case-study report in
+[`casestudy/m6_report`](casestudy/m6_report/README.md).
 
 ## Build and tools
 
