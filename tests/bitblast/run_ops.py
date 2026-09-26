@@ -18,7 +18,7 @@ import sys
 import tempfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-QFV = os.path.join(ROOT, "build", "qfv")
+QFV = os.environ.get("QFV_BIN") or os.path.join(ROOT, "build", "qfv")  # QFV_BIN: test another build
 BTORSIM = os.path.join(ROOT, "tools", "oss-cad-suite", "bin", "btorsim")
 
 BINARY = ["add", "sub", "mul", "udiv", "urem", "sdiv", "srem", "smod", "sll", "srl", "sra",
@@ -28,6 +28,10 @@ UNARY = ["not", "neg", "inc", "dec"]
 REDUCE = ["redand", "redor", "redxor"]
 BOOL = ["implies", "iff"]
 WIDTHS = [1, 2, 3, 5, 8, 13]
+# Shifts and rotates also at and beyond the 64-bit boundary, including widths
+# that are not powers of two (where high amount bits still change a rotation).
+SHIFTS = ["sll", "srl", "sra", "rol", "ror"]
+WIDE = [63, 64, 65, 70, 127]
 
 
 def model(op, w):
@@ -95,11 +99,15 @@ def reached(cmd):
     return sorted(x for x in m.group(1).split() if x.endswith("@0"))
 
 
-def run(tmp, name, btor, inputs_widths, vectors, rng):
+def run(tmp, name, btor, inputs_widths, vectors, rng, fixed=()):
     path = os.path.join(tmp, "m.btor")
     open(path, "w").write(btor)
     mism = 0
-    for _ in range(vectors):
+    for k in range(vectors + len(fixed)):
+        if k < len(fixed):
+            vals = [format(v, f"0{w}b") for v, w in zip(fixed[k], inputs_widths)]
+            mism += check(tmp, name, path, vals, mism)
+            continue
         vals = []
         for w in inputs_widths:
             choice = rng.random()
@@ -109,42 +117,77 @@ def run(tmp, name, btor, inputs_widths, vectors, rng):
                 v = (1 << w) - 1
             elif choice < 0.4:
                 v = 1 << (w - 1)
+            elif choice < 0.55:
+                v = 1 << rng.randrange(w)  # one bit: reaches every shift-amount bit
             else:
                 v = rng.getrandbits(w)
             vals.append(format(v, f"0{w}b"))
-        wit = os.path.join(tmp, "w.wit")
-        open(wit, "w").write(witness(vals))
-        ref = reached([BTORSIM, "-v", "-c", path, wit])
-        ours = reached([QFV, "sim", "--btor", path, "--witness", wit])
-        if ref is None or ours is None or ref != ours:
-            mism += 1
-            if mism == 1:
-                print(f"  MISMATCH {name} inputs={vals}: btorsim={ref} qfv={ours}")
+        mism += check(tmp, name, path, vals, mism)
     return mism
+
+
+def shift_reference(op, a, b, w):
+    """Exact sll/srl/sra (BTOR2 semantics: an amount >= width shifts everything out)."""
+    if op == "sll":
+        r = (a << b) if b < w else 0
+    elif op == "srl":
+        r = (a >> b) if b < w else 0
+    else:
+        sign = a >> (w - 1)
+        r = (a >> b) if b < w else 0
+        if sign:
+            r |= ((1 << w) - 1) ^ ((1 << max(w - min(b, w), 0)) - 1)
+    r &= (1 << w) - 1
+    return sorted(f"b{i}@0" for i in range(w) if r >> i & 1)
+
+
+def check(tmp, name, path, vals, earlier):
+    """1 if qfv and the reference disagree on this input vector (printed if the first)."""
+    wit = os.path.join(tmp, "w.wit")
+    open(wit, "w").write(witness(vals))
+    op, w = name.split("/w")[0], len(vals[0])
+    if op in ("sll", "srl", "sra") and int(vals[1], 2) >= 1 << 32:
+        # btorsim truncates shift amounts to 32 bits (sll by 2^32 returns its
+        # operand unshifted), so above that the reference is computed here.
+        ref = shift_reference(op, int(vals[0], 2), int(vals[1], 2), w)
+    else:
+        ref = reached([BTORSIM, "-v", "-c", path, wit])
+    ours = reached([QFV, "sim", "--btor", path, "--witness", wit])
+    if ref is None or ours is None or ref != ours:
+        if not earlier:
+            print(f"  MISMATCH {name} inputs={vals}: btorsim={ref} qfv={ours}")
+        return 1
+    return 0
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--vectors", type=int, default=25)
     args = ap.parse_args()
+    if not os.path.exists(BTORSIM):  # 77: skipped (CTest SKIP_RETURN_CODE), not passed
+        print(f"SKIP: no btorsim at {BTORSIM} (run scripts/setup_tools.sh)")
+        sys.exit(77)
     rng = random.Random(7)
     failures, total = 0, 0
     with tempfile.TemporaryDirectory() as tmp:
         ops = BINARY + COMPARE + UNARY + REDUCE + BOOL + ["concat", "uext", "sext", "slice", "ite", "negarg"]
         for op in ops:
             bad_widths = []
-            for w in WIDTHS:
+            widths_for_op = WIDTHS + (WIDE if op in SHIFTS else [])
+            for w in widths_for_op:
                 if op == "slice" and w < 2:
                     continue
                 btor, rw, iw = model(op, w)
                 widths = [iw, iw] + ([1] if op == "ite" else [])
+                # PROJECT_REVIEW finding 8: rol/ror by 2^63 at width 65.
+                fixed = [(1, 1 << 63), (1, (1 << 64) | 3)] if op in ("rol", "ror") and w > 64 else []
                 total += 1
-                if run(tmp, f"{op}/w{w}", btor, widths, args.vectors, rng):
+                if run(tmp, f"{op}/w{w}", btor, widths, args.vectors, rng, fixed):
                     failures += 1
                     bad_widths.append(w)
                 if op in BOOL:
                     break
-            print(f"{'PASS' if not bad_widths else 'FAIL'}  {op:8s} widths={WIDTHS if op not in BOOL else [1]}"
+            print(f"{'PASS' if not bad_widths else 'FAIL'}  {op:8s} widths={widths_for_op if op not in BOOL else [1]}"
                   + (f"  failing widths={bad_widths}" if bad_widths else ""))
         for name, btor in const_models():
             total += 1

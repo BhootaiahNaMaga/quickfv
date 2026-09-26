@@ -53,6 +53,7 @@ public:
 private:
     struct Entry {
         std::string id, label, kind, module, source, text, topScopeText;
+        std::string instancePath; // set when the directive has several instances
         std::string status = "ready"; // ready | unsupported | error
         std::string reason;
         size_t assertProp = SIZE_MAX, triggerProp = SIZE_MAX;
@@ -62,6 +63,7 @@ private:
         json last; // last verdict and trace paths
     };
 
+    json loadNew(const SetupConfig& cfg);
     std::string uniqueId(const std::string& label) const;
     json addFromCompilation(slang::ast::Compilation& comp, size_t probeBuffer, size_t lo, size_t hi,
                             const std::string& module, const std::string& source);
@@ -77,6 +79,7 @@ private:
     std::unique_ptr<TransitionSystem> ts;
     std::unique_ptr<Unroller> bmc, step;
     std::vector<Entry> entries;
+    std::vector<std::string> removedFileAssumptions; // still in the sources JasperGold analyzes
     json loadInfo;
 };
 

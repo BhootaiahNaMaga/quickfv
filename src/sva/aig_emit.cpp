@@ -332,10 +332,16 @@ private:
                                     std::to_string(w) + " in the RTL");
                 return b;
             };
-            if (auto c = constant(es.selector()))
-                return elem(int32_t(bitsToInt(*c, es.selector().type->isSigned())));
-            Bits sel = build(es.selector()), out(w, kFalse);
+            bool sgn = es.selector().type->isSigned();
+            if (auto c = constant(es.selector())) {
+                int64_t i = bitsToInt(*c, sgn);
+                return i >= range.lower() && i <= range.upper() ? elem(int32_t(i)) : undefined(w);
+            }
+            Bits sel = build(es.selector());
+            Bits out = coversAll(range, sel.size(), sgn) ? Bits(w, kFalse) : undefined(w);
             for (int32_t i = range.lower(); i <= range.upper(); i++) {
+                if (!representable(i, sel.size(), sgn))
+                    continue;
                 Lit hit = equal(sel, intBits(i, sel.size()));
                 Bits e = elem(i);
                 for (uint32_t k = 0; k < w; k++)
@@ -348,19 +354,26 @@ private:
         auto range = vt.getFixedRange();
         uint32_t elemW = w;
         auto pos = [&](int64_t idx) { return int64_t(range.translateIndex(int32_t(idx))) * elemW; };
+        bool sgn = es.selector().type->isSigned();
         if (auto c = constant(es.selector())) {
-            int64_t p = pos(bitsToInt(*c, es.selector().type->isSigned()));
+            int64_t i = bitsToInt(*c, sgn);
+            if (i < range.lower() || i > range.upper())
+                return undefined(elemW);
+            int64_t p = pos(i);
             Bits out;
             for (uint32_t k = 0; k < elemW; k++)
-                out.push_back(p >= 0 && size_t(p + k) < v.size() ? v[size_t(p + k)] : kFalse);
+                out.push_back(v[size_t(p + k)]);
             return out;
         }
-        Bits sel = build(es.selector()), out(w, kFalse);
+        Bits sel = build(es.selector());
+        Bits out = coversAll(range, sel.size(), sgn) ? Bits(w, kFalse) : undefined(w);
         for (int32_t i = range.lower(); i <= range.upper(); i++) {
+            if (!representable(i, sel.size(), sgn))
+                continue;
             Lit hit = equal(sel, intBits(i, sel.size()));
             int64_t p = pos(i);
             for (uint32_t k = 0; k < elemW; k++)
-                out[k] = aig.mkIte(hit, size_t(p + k) < v.size() ? v[size_t(p + k)] : kFalse, out[k]);
+                out[k] = aig.mkIte(hit, v[size_t(p + k)], out[k]);
         }
         return out;
     }
@@ -374,10 +387,49 @@ private:
         int64_t b = range.translateIndex(int32_t(constInt(rs.right())));
         if (a > b)
             std::swap(a, b);
-        Bits out;
-        for (int64_t i = a; i <= b; i++)
-            out.push_back(i >= 0 && size_t(i) < v.size() ? v[size_t(i)] : kFalse);
+        Bits out, x;
+        for (int64_t i = a; i <= b; i++) {
+            if (i >= 0 && size_t(i) < v.size()) {
+                out.push_back(v[size_t(i)]);
+                continue;
+            }
+            if (x.empty())
+                x = undefined(uint32_t(b - a + 1));
+            out.push_back(x[size_t(i - a)]);
+        }
         return out;
+    }
+
+    /// The value of an out-of-range select: X in SystemVerilog, which formal
+    /// semantics (and the Yosys flow's `setundef -anyseq`) treat as a fresh
+    /// unconstrained value in every cycle, never as a convenient constant.
+    Bits undefined(uint32_t w) {
+        TransitionSystem::Input in;
+        in.name = "$qfv_undef$" + std::to_string(ts.inputs.size());
+        in.synthetic = true;
+        for (uint32_t k = 0; k < w; k++)
+            in.bits.push_back(aig.newInput());
+        ts.inputs.push_back(in);
+        return in.bits;
+    }
+
+    /// Can a `w`-bit selector hold index `i`? (Otherwise its bit pattern would
+    /// alias a different index.)
+    static bool representable(int64_t i, size_t w, bool sgn) {
+        if (w >= 63)
+            return true;
+        int64_t lo = sgn ? -(int64_t(1) << (w - 1)) : 0;
+        int64_t hi = sgn ? (int64_t(1) << (w - 1)) - 1 : (int64_t(1) << w) - 1;
+        return i >= lo && i <= hi;
+    }
+
+    /// Does every value of a `w`-bit selector fall inside `range`?
+    static bool coversAll(const ConstantRange& range, size_t w, bool sgn) {
+        if (w >= 31)
+            return false;
+        int64_t lo = sgn ? -(int64_t(1) << (w - 1)) : 0;
+        int64_t hi = sgn ? (int64_t(1) << (w - 1)) - 1 : (int64_t(1) << w) - 1;
+        return range.lower() <= lo && range.upper() >= hi;
     }
 
     Bits call(const CallExpression& c, uint32_t w) {

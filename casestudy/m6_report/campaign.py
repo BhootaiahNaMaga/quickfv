@@ -133,11 +133,16 @@ def run_variant(design, cfg, name, dut_text, defines, budget, tmp):
         s.close()
         return {"variant": name, "error": json.dumps(r)[:300]}
     for mod, n, sva in cfg["assumptions"]:
-        s.call("add_assumption", module=mod, name=n, sva=sva, disable_iff="tb_reset")
-    add_ms = []
+        ra, _, _ = s.call("add_assumption", module=mod, name=n, sva=sva, disable_iff="tb_reset")
+        if not ra.get("ok"):  # a missing assumption changes every verdict
+            s.close()
+            return {"variant": name, "error": f"assumption {n} rejected: " + json.dumps(ra)[:300]}
+    add_ms, add_errors = [], []
     for mod, n, sva in cfg["extra"]:
         rr, _, ms = s.call("add", module=mod, name=n, sva=sva, disable_iff="tb_reset")
         add_ms.append(ms)
+        if not rr.get("ok"):
+            add_errors.append(n)
     res, ev, check_ms = s.call("check", budget_s=budget)
     s.close()
     verdicts = res.get("verdicts", {})
@@ -156,8 +161,10 @@ def run_variant(design, cfg, name, dut_text, defines, budget, tmp):
         "variant": name, "load_ms": round(load_ms), "check_ms": round(check_ms), "verdicts": verdicts,
         "killed_by": killers,
         "first_cex_ms": round(min((e["ms"] for e in cex if e["id"] not in TOO_STRONG), default=-1), 1),
-        "cex_certified": all(e["certified"]["btorsim"] == "confirmed" for e in cex),
-        "proven_certified": all(e.get("proof_certified") for e in proven),
+        # None: nothing to certify (not "all certified").
+        "cex_certified": all(e["certified"]["btorsim"] == "confirmed" for e in cex) if cex else None,
+        "proven_certified": all(e.get("proof_certified") for e in proven) if proven else None,
+        "add_errors": add_errors,
         "n_cex": len(cex), "n_proven": len(proven), "rtl_replay": rep,
     }
 

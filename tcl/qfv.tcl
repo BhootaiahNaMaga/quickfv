@@ -25,7 +25,8 @@ proc qfv::start {{work qfv_session}} {
     variable chan
     set bin qfv
     if {[info exists ::env(QFV_BIN)]} { set bin $::env(QFV_BIN) }
-    set chan [open "|$bin serve --work $work" r+]
+    # A list, not a string: paths with spaces stay single arguments.
+    set chan [open |[list $bin serve --work $work] r+]
     fconfigure $chan -buffering line -translation lf
     return $chan
 }

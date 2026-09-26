@@ -21,6 +21,7 @@ Usage: tests/session_equiv/run_session_equiv.py [--filter SUBSTR]
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -50,9 +51,14 @@ def flow(prop, disable, tmp):
                         "--no-ric3", "--work", os.path.join(tmp, "flow"), src],
                        capture_output=True, text=True, env=env)
     ev = [json.loads(l) for l in r.stdout.splitlines() if l.startswith("{")]
+    summary = [e for e in ev if e["event"] == "summary"]
+    # Exit 0 (no CEX) or 1 (CEX) with a summary; anything else is a failed run,
+    # never a PASS_BOUNDED.
+    if r.returncode not in (0, 1) or not summary or "P" not in summary[-1]["verdicts"]:
+        return f"FLOW-ERROR (exit {r.returncode}): {(r.stdout + r.stderr)[-200:]!r}", None
     res = [e for e in ev if e["event"] == "result" and e["goal"] == "no-failure"]
     cex = [e["length"] for e in res if e["status"] == "CEX"]
-    return ("CEX", min(cex)) if cex else ("PASS_BOUNDED", None)
+    return summary[-1]["verdicts"]["P"], min(cex) if cex else None
 
 
 def replay_on_text_monitor(tb, prop, disable, tmp):
@@ -61,9 +67,10 @@ def replay_on_text_monitor(tb, prop, disable, tmp):
     src = os.path.join(tmp, "rep.sv")
     open(src, "w").write(DESIGN.replace("endmodule", f"P: assert property (@(posedge clk) {dis}{prop});\nendmodule"))
     out = os.path.join(tmp, "rep_mon")
-    subprocess.run([QFV, "compile-sva", "--top", "t", "-o", out, src], capture_output=True)
+    if subprocess.run([QFV, "compile-sva", "--top", "t", "-o", out, src], capture_output=True).returncode:
+        return "compile-error"
     obj = os.path.join(tmp, "rep_obj")
-    subprocess.run(["rm", "-rf", obj])
+    shutil.rmtree(obj, ignore_errors=True)
     b = subprocess.run([os.path.join(BIN, "verilator"), "--binary", "--timing", "--assert", "-Wno-fatal",
                         "-Wno-lint", "-Wno-style", "--top-module", "qfv_replay", "-Mdir", obj, "-o", "sim",
                         tb, os.path.join(out, "rep.sv")], capture_output=True, text=True)

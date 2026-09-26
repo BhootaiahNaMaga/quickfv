@@ -3,7 +3,7 @@
 A fast, agent-first formal pre-check for SystemVerilog assertions, run **before** JasperGold:
 - lint in milliseconds;
 - a vacuity check (can the trigger ever fire?);
-- a time-bounded bug hunt, with every counterexample independently certified.
+- a time-bounded bug hunt; a counterexample is reported only after btorsim replays it.
 
 The full design is in [`SPEC.md`](SPEC.md); a one-page summary of what was built and measured is in
 [`docs/SUMMARY.md`](docs/SUMMARY.md), and the case-study report in
@@ -14,8 +14,10 @@ The full design is in [`SPEC.md`](SPEC.md); a one-page summary of what was built
 ```
 scripts/setup_tools.sh          # OSS CAD Suite (Yosys, slang, rIC3, Verilator, btorsim, ...), EBMC, FVEval
 cmake -S . -B build -G Ninja && cmake --build build
-export PATH=$PWD/tools/oss-cad-suite/bin:$PATH
+export PATH=$PWD/tools/oss-cad-suite/bin:$PWD/tools/lidrup-check:$PWD/tools/certifaiger/build:$PATH
 ```
+The last two directories hold the proof checkers (`--certify` and rIC3 proofs); without them,
+proofs stay uncertified and are not reported.
 
 ## Use it
 
@@ -40,16 +42,23 @@ qfv bmc  --top fifo --clock clk --reset-expr '!reset_' \
 | Verdict | Meaning |
 |---|---|
 | `CEX` | Failing trace (shortest found), replayed by btorsim, and by Verilator on the original RTL with `--replay` |
+| `CEX_UNCONFIRMED` | A trace was found but btorsim could not replay it (missing, timed out, or disagreed). Inconclusive: not a `CEX`, not a pass (`qfv bmc` exits 2) |
 | `VACUOUS` | The trigger provably never fires |
 | `PROVEN` | Holds for all time; reported only when rIC3's witness circuit passes Certifaiger |
 | `POSSIBLY_VACUOUS` | Trigger not reached within the budget |
 | `PASS_BOUNDED` | No CEX within the budget, and the trigger is reachable. **Not a proof** (checkable with `--certify`) |
 | `TRIVIALLY_TRUE` | Can't fail (folded to a constant during synthesis; one-shot `qfv bmc` only) |
-| `COVERED` / `UNREACHABLE` / `NOT_COVERED` | Cover properties: witness found / provably unreachable / not reached in the budget |
+| `COVERED` / `UNREACHABLE` / `NOT_COVERED` | Cover properties: witness found / provably unreachable / not reached in the budget (`COVERED_UNCONFIRMED`: witness not replayed) |
 | `UNSUPPORTED` / `ERROR` | Outside the v1 SVA subset, with a reason and location / has errors |
 
 Priority when several apply: `CEX`, then `VACUOUS`, then `PROVEN`. A CEX that needs a particular X
-value carries an `x_dependent` note.
+value carries an `x_dependent` note. `VACUOUS`, `UNREACHABLE` and `PROVEN` from rIC3 need a verified
+certificate; an uncertified proof is dropped and the property stays open.
+
+An assertion in a module with several instances is checked in every instance, with one verdict each
+under its hierarchical name (`u1.P`, `u2.P`). The environment is never silently widened: a load with an
+unsupported or erroneous assumption fails, and a rejected `add_assumption` leaves nothing behind. A
+failed reload leaves the previous design loaded, unchanged.
 
 ## Commands and options
 
@@ -84,13 +93,20 @@ Setup files use a JasperGold Tcl subset (`analyze`, `elaborate`, `clock`, `reset
 | `scripts/setup_tools.sh` | Fetches and builds the open-source tools into `tools/` |
 | `docker/` | Linux container (untested) |
 | `casestudy/m0…m6/` | Milestone write-ups with results and lessons (M1 is in `tests/sva_equiv/README.md`); `m6_report` is the FVEval case study |
-| `tests/` | SVA equivalence (3 oracles), bit-blaster vs btorsim, session vs flow, MCP agent loop, Tcl smoke test, portfolio and scaling benchmarks |
+| `tests/` | Regressions, SVA equivalence (3 oracles), bit-blaster vs btorsim, session vs flow, MCP agent loop, Tcl smoke test, portfolio and scaling benchmarks |
+| `PROJECT_REVIEW.md` | External review (2026-09-26); its findings are fixed and covered by `tests/regress` |
 
 ## Tests
 
 ```
+cd build && ctest -L fast          # regressions (tests/regress) + bit-blaster vs btorsim, ~2 min
+cd build && ctest -L integration   # SVA oracles, session vs flow, MCP agent loop, Tcl package, ~6 min
+```
+A test whose oracle tools are missing is reported as skipped, not passed. Individually:
+```
+python3 tests/regress/run_regress.py           # minimal reproductions of past wrong verdicts and crashes
 python3 tests/sva_equiv/run_equiv.py           # SVA compiler vs EBMC, Verilator, golden traces
-python3 tests/bitblast/run_ops.py              # bit-blaster vs btorsim, per operator
+python3 tests/bitblast/run_ops.py              # bit-blaster vs btorsim, per operator (to 127 bits)
 python3 tests/session_equiv/run_session_equiv.py
 python3 tests/mcp_agent_loop.py                # end-to-end agent loop over MCP
 tclsh tests/tcl_smoke.tcl

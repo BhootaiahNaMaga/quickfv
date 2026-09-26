@@ -56,6 +56,11 @@ def pipeline_assertions(rtl):
     return [("lat_vld", f"in_vld |-> ##{depth} out_vld"), ("lat_idle", f"!in_vld |-> ##{depth} !out_vld")]
 
 
+def all_or_none(items):
+    items = list(items)
+    return all(items) if items else None
+
+
 def check(rtl, tb, top, props, budget, tmp):
     src = os.path.join(tmp, "design.sv")
     open(src, "w").write(rtl + "\n" + tb)
@@ -66,17 +71,20 @@ def check(rtl, tb, top, props, budget, tmp):
     if not r.get("ok"):
         s.close()
         return {"error": json.dumps(r)[:400]}
-    add_ms = []
+    add_ms, add_errors = [], []
     for name, sva in props:
         rr, _, ms = s.call("add", module=top, name=name, sva=sva, disable_iff="!reset_")
         add_ms.append(ms)
+        if not rr.get("ok"):
+            add_errors.append(name)
     res, ev, ms = s.call("check", budget_s=budget)
     s.close()
     v = res.get("verdicts", {})
     return {"load_ms": round(load_ms), "add_ms_max": round(max(add_ms or [0]), 1), "check_ms": round(ms),
-            "verdicts": v,
-            "cex_certified": all(e["certified"]["btorsim"] == "confirmed" for e in ev if e.get("status") == "CEX"),
-            "proven_certified": all(e.get("proof_certified") for e in ev if e.get("status") == "PROVEN"),
+            "verdicts": v, "add_errors": add_errors,
+            # None: nothing to certify (not "all certified").
+            "cex_certified": all_or_none(e["certified"]["btorsim"] == "confirmed" for e in ev if e.get("status") == "CEX"),
+            "proven_certified": all_or_none(e.get("proof_certified") for e in ev if e.get("status") == "PROVEN"),
             "first_cex_ms": min((e["ms"] for e in ev if e.get("status") == "CEX" and e.get("goal") == "no-failure"),
                                 default=None)}
 
