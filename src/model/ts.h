@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,9 @@ struct TransitionSystem {
     std::vector<Latch> latches;
     std::vector<Property> props;
     std::vector<Lit> constraints; // must hold in every frame
+    /// Named design signals (inputs, registers, and wires exposed as BTOR2
+    /// outputs), by hierarchical name relative to the top: "fifo_tb_inst.wr_push".
+    std::map<std::string, std::vector<Lit>> signals;
 };
 
 /// Loads a BTOR2 file and bit-blasts it. Arrays, liveness (justice/fairness)

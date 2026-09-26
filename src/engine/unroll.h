@@ -38,6 +38,16 @@ public:
     int8_t value(int frame, Lit l) const;
 
     void setDeadline(std::chrono::steady_clock::time_point t);
+
+    /// Call after latches were added to the transition system (the AIG itself
+    /// may grow at any time).
+    void syncLatches();
+
+    /// Adds a switchable assumption: `c` must hold in every frame while the
+    /// assumption is active. Returns its id. Implemented with an activation
+    /// literal, so it can be turned off without rebuilding the solver.
+    size_t addAssumption(Lit c);
+    void setAssumptionActive(size_t id, bool active);
     size_t numVars() const { return size_t(nextVar - 1); }
     size_t numClauses() const { return clauses; }
 
@@ -52,6 +62,13 @@ private:
     Impl* impl;
     std::vector<std::vector<int>> map; // [frame][aig var] -> SAT literal (0 = not encoded)
     std::vector<int32_t> latchOfVar, bitOfVar;
+    struct Assumption {
+        Lit lit;
+        int act;
+        bool active;
+    };
+    std::vector<Assumption> assumptions;
+    uint32_t knownVars = 0;
     int nextVar = 1;
     int trueVar = 0;
     size_t clauses = 0;

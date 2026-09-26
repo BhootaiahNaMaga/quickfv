@@ -7,6 +7,8 @@
 //                                     T0 for one new assertion inserted into module M
 //   qfv bmc         [opts] --top T [--reset-expr E] [--budget S] files...
 //   qfv bmc         --btor FILE [--budget S]
+//   qfv serve       [--work DIR]    session over stdio (JSON lines), used by the Tcl package
+//   qfv mcp         [--work DIR]    MCP server over stdio, for agents
 //                                     bug hunt with the built-in incremental BMC;
 //                                     NDJSON events, BTOR2 witnesses for CEXs
 //
@@ -24,6 +26,7 @@
 #include <sstream>
 
 #include "json.h"
+#include "server.h"
 #include "lint.h"
 #include "session.h"
 #include "slang/diagnostics/DiagnosticEngine.h"
@@ -742,6 +745,14 @@ int cmdSim(const Args& args) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // Session servers take no source files: the design arrives with `load`.
+    if (argc >= 2 && (std::string(argv[1]) == "serve" || std::string(argv[1]) == "mcp")) {
+        std::string work = "qfv_session";
+        for (int i = 2; i + 1 < argc; i++)
+            if (std::string(argv[i]) == "--work")
+                work = argv[i + 1];
+        return std::string(argv[1]) == "serve" ? runServe(work) : runMcp(work);
+    }
     auto args = parseArgs(argc, argv);
     Session session(args.session);
     if (args.command == "bmc" && !args.btor.empty())

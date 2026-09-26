@@ -19,6 +19,7 @@ struct SessionOptions {
     std::vector<std::string> defines;     // NAME or NAME=VALUE
     std::vector<std::string> includeDirs;
     std::string top;
+    std::vector<std::string> paramOverrides; // NAME=VALUE for the top module
 };
 
 class Session {
@@ -55,6 +56,7 @@ private:
     slang::SourceManager sm;
     std::vector<std::shared_ptr<slang::syntax::SyntaxTree>> trees;
     double parseMs_ = 0;
+    size_t reparseCount = 0;
 };
 
 double msSince(std::chrono::steady_clock::time_point t0);

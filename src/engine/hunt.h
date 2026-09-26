@@ -12,6 +12,7 @@
 #pragma once
 
 #include <atomic>
+#include <map>
 #include <functional>
 #include <optional>
 #include <string>
@@ -33,10 +34,17 @@ struct HuntOptions {
     /// "" (unknown); must stop promptly when `cancel` becomes true.
     std::function<std::string(size_t prop, const std::atomic<bool>& cancel)> externalProver;
     std::string externalProverName = "external";
+    /// Session mode: only these properties are checked (empty = all), and the
+    /// session's switchable assumptions constrain random simulation.
+    std::vector<size_t> onlyProps;
+    std::vector<Lit> simConstraints;
+    /// trigger prop -> its assertion's prop. When a trigger is proven
+    /// unreachable the assertion can never fail, so its search stops (VACUOUS).
+    std::map<size_t, size_t> assertOfTrigger;
 };
 
 struct Verdict {
-    // Assert: CEX | PASS_BOUNDED.   Reach: REACHABLE | UNREACHABLE | NOT_REACHED.
+    // Assert: CEX | PASS_BOUNDED | VACUOUS.   Reach: REACHABLE | UNREACHABLE | NOT_REACHED.
     std::string status = "RUNNING";
     std::string engine;      // sim | bmc | induction
     int depthChecked = -1;   // BMC: no hit in frames 0..depthChecked
@@ -52,6 +60,13 @@ public:
 
     Hunt(const TransitionSystem& ts, HuntOptions opts) : ts(ts), opts(opts) {}
 
+    /// Session mode: reuse long-lived unrollers (their encodings and learned
+    /// clauses carry over between checks).
+    void useUnrollers(class Unroller* bmc, class Unroller* step) {
+        extBmc = bmc;
+        extStep = step;
+    }
+
     /// `onEvent` fires when a property gets a trace or a proof, when a trace is
     /// shortened, and once at the end for properties still open.
     std::vector<Verdict> run(const Event& onEvent);
@@ -61,6 +76,8 @@ public:
 private:
     const TransitionSystem& ts;
     HuntOptions opts;
+    class Unroller* extBmc = nullptr;
+    class Unroller* extStep = nullptr;
 };
 
 } // namespace qfv

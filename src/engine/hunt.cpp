@@ -48,14 +48,41 @@ std::vector<Verdict> Hunt::run(const Event& onEvent) {
     size_t n = ts.props.size();
     std::vector<Verdict> v(n);
     std::vector<bool> done(n, false);
+    if (!opts.onlyProps.empty()) { // session mode: everything else counts as done
+        done.assign(n, true);
+        for (size_t p : opts.onlyProps)
+            done[p] = false;
+    }
+    std::vector<bool> skipped = done;
     // A trace of length d exists: BMC keeps looking in frames < d for a shorter one.
     std::vector<int> shortenBelow(n, -1);
-    size_t open = n;
+    size_t open = 0;
+    for (bool d : done)
+        open += !d;
 
-    Unroller bmc(ts, /*freeInit=*/false);
-    Unroller step(ts, /*freeInit=*/true);
+    std::unique_ptr<Unroller> ownBmc, ownStep;
+    if (!extBmc) {
+        ownBmc = std::make_unique<Unroller>(ts, /*freeInit=*/false);
+        ownStep = std::make_unique<Unroller>(ts, /*freeInit=*/true);
+    }
+    Unroller& bmc = extBmc ? *extBmc : *ownBmc;
+    Unroller& step = extStep ? *extStep : *ownStep;
     bmc.setDeadline(deadline);
     step.setDeadline(deadline);
+
+    /// A trigger proven unreachable settles its assertion: it can never fail.
+    auto settleVacuous = [&](size_t trigger, const std::string& engine) {
+        auto it = opts.assertOfTrigger.find(trigger);
+        if (it == opts.assertOfTrigger.end() || done[it->second])
+            return;
+        auto& a = v[it->second];
+        a.status = "VACUOUS";
+        a.engine = engine;
+        a.ms = ms();
+        done[it->second] = true;
+        open--;
+        onEvent(it->second, a);
+    };
 
     /// Induction step: from ANY state, k frames without the goal cannot be
     /// followed by the goal. With the base case (BMC: no goal in frames 0..k),
@@ -75,6 +102,7 @@ std::vector<Verdict> Hunt::run(const Event& onEvent) {
             done[p] = true;
             open--;
             onEvent(p, r);
+            settleVacuous(p, "induction");
         }
         return sres;
     };
@@ -98,7 +126,10 @@ std::vector<Verdict> Hunt::run(const Event& onEvent) {
         ro.seed = opts.seed;
         RandSim sim(ts, ro);
         auto simEnd = std::min(deadline, start + std::chrono::milliseconds(int64_t(opts.simSeconds * 1000)));
-        sim.run(simEnd, std::vector<bool>(n, true), [&](size_t p, const Cex& cex) {
+        std::vector<bool> watch(n);
+        for (size_t p = 0; p < n; p++)
+            watch[p] = !done[p];
+        sim.run(simEnd, watch, [&](size_t p, const Cex& cex) {
             auto& r = v[p];
             r.status = hitStatus(ts.props[p].kind);
             r.engine = "sim";
@@ -108,7 +139,7 @@ std::vector<Verdict> Hunt::run(const Event& onEvent) {
             shortenBelow[p] = cex.depth;
             open--;
             onEvent(p, r);
-        });
+        }, opts.simConstraints);
         simCycles = sim.cyclesSimulated();
     }
 
@@ -136,6 +167,7 @@ std::vector<Verdict> Hunt::run(const Event& onEvent) {
             done[p] = true;
             open--;
             onEvent(p, r);
+            settleVacuous(p, opts.externalProverName);
         }
     };
 
@@ -195,7 +227,7 @@ std::vector<Verdict> Hunt::run(const Event& onEvent) {
             f.wait();
 
     for (size_t p = 0; p < n; p++) {
-        if (done[p])
+        if (done[p] || skipped[p])
             continue;
         auto& r = v[p];
         r.status = ts.props[p].kind == Kind::Assert ? "PASS_BOUNDED" : "NOT_REACHED";

@@ -34,6 +34,11 @@ target_compile_definitions(cadical PRIVATE NBUILD NDEBUG
 target_include_directories(cadical PUBLIC ${cadical_SOURCE_DIR}/src)
 target_compile_options(cadical PRIVATE -w)
 
+# nlohmann/json (MIT): request parsing for the session server and MCP.
+FetchContent_Declare(json
+  URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz)
+FetchContent_MakeAvailable(json)
+
 # Btor2Tools (MIT): BTOR2 parser only.
 FetchContent_Declare(btor2tools
   GIT_REPOSITORY https://github.com/hwmcc/btor2tools.git
@@ -52,6 +57,10 @@ add_library(qfv_core
   src/sva/seq_ir.cpp
   src/sva/lower.cpp
   src/sva/monitor.cpp
+  src/sva/aig_emit.cpp
+  src/model/btor2_write.cpp
+  src/session/design_session.cpp
+  src/session/setup_file.cpp
   src/model/aig.cpp
   src/model/btor2_load.cpp
   src/engine/unroll.cpp
@@ -61,8 +70,8 @@ add_library(qfv_core
   src/engine/trace.cpp
   src/engine/sim.cpp)
 target_include_directories(qfv_core PUBLIC src)
-target_link_libraries(qfv_core PUBLIC slang::slang cadical btor2parser)
+target_link_libraries(qfv_core PUBLIC slang::slang cadical btor2parser nlohmann_json::nlohmann_json)
 target_compile_options(qfv_core PRIVATE -Wall -Wextra)
 
-add_executable(qfv tools_src/qfv_main.cpp)
+add_executable(qfv tools_src/qfv_main.cpp tools_src/server.cpp)
 target_link_libraries(qfv PRIVATE qfv_core)

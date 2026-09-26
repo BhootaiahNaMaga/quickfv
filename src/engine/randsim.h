@@ -32,7 +32,8 @@ public:
     /// Simulates until `deadline` or until every watched property was hit.
     /// `watch[p]` selects properties; `onHit(p, trace)` fires once per property.
     void run(std::chrono::steady_clock::time_point deadline, std::vector<bool> watch,
-             const std::function<void(size_t, const Cex&)>& onHit);
+             const std::function<void(size_t, const Cex&)>& onHit,
+             const std::vector<Lit>& extraConstraints = {});
 
     uint64_t cyclesSimulated() const { return cycles; }
 

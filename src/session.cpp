@@ -48,6 +48,8 @@ std::unique_ptr<ast::Compilation> Session::compile(
     ast::CompilationOptions co;
     if (!opts.top.empty())
         co.topModules.emplace(opts.top);
+    for (auto& p : opts.paramOverrides)
+        co.paramOverrides.push_back(p);
     bag.set(co);
     auto comp = std::make_unique<ast::Compilation>(bag);
     for (size_t i = 0; i < trees.size(); i++)
@@ -58,7 +60,9 @@ std::unique_ptr<ast::Compilation> Session::compile(
 
 std::shared_ptr<syntax::SyntaxTree> Session::reparse(size_t index, std::string_view text) {
     auto path = std::string(sm.getRawFileName(trees[index]->root().sourceRange().start().buffer()));
-    return syntax::SyntaxTree::fromText(text, sm, path, path, parseOptions());
+    // A source manager accepts each path once; every probe gets its own.
+    auto unique = path + "#qfv" + std::to_string(++reparseCount);
+    return syntax::SyntaxTree::fromText(text, sm, path, unique, parseOptions());
 }
 
 slang::BufferID Session::buffer(size_t index) const {

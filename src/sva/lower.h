@@ -7,6 +7,10 @@
 #include <vector>
 
 #include "slang/ast/Compilation.h"
+
+namespace slang::ast {
+class ConcurrentAssertionStatement;
+}
 #include "slang/text/SourceLocation.h"
 #include "sva/seq_ir.h"
 
@@ -31,6 +35,8 @@ struct AssertionSite {
     std::string reason;     // why it is unsupported or erroneous
     Location reasonLoc;     // location of the offending construct
     AssertionIR ir;         // valid when supported
+    const slang::ast::ConcurrentAssertionStatement* stmt = nullptr;
+    std::string instancePath; // hierarchical path below the top ("" = top itself)
 };
 
 /// Collects and lowers every concurrent assertion in an elaborated compilation.

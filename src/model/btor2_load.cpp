@@ -82,6 +82,8 @@ public:
                     bits.push_back(aig.newInput());
                 nodes[l->id] = bits;
                 std::string name = l->symbol ? l->symbol : "";
+                if (!name.empty())
+                    ts.signals[name] = bits;
                 if (l->tag == BTOR2_TAG_input) {
                     ts.inputs.push_back({name, l->id, bits});
                 }
@@ -105,8 +107,23 @@ public:
             switch (l->tag) {
                 case BTOR2_TAG_sort:
                 case BTOR2_TAG_input:
-                case BTOR2_TAG_state:
-                case BTOR2_TAG_output: break;
+                case BTOR2_TAG_state: break;
+                case BTOR2_TAG_output:
+                    if (l->symbol) {
+                        ts.signals[l->symbol] = arg(l, 0);
+                        // With every wire exposed (session models), Yosys names the
+                        // output, not the state it reads: name the state from it.
+                        auto li = latchIndex.find(l->args[0]);
+                        if (l->args[0] > 0 && li != latchIndex.end()) {
+                            auto& latch = ts.latches[li->second];
+                            if (latch.name.empty() || latch.synthetic) {
+                                latch.name = l->symbol;
+                                latch.synthetic = latch.name.find('$') != std::string::npos ||
+                                                  latch.name.find("qfv_") != std::string::npos;
+                            }
+                        }
+                    }
+                    break;
                 case BTOR2_TAG_init: {
                     auto& latch = ts.latches.at(latchIndex.at(l->args[0]));
                     Bits v = arg(l, 1);

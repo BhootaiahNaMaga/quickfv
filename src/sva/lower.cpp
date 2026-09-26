@@ -79,6 +79,7 @@ public:
 
     AssertionIR lower(const ConcurrentAssertionStatement& stmt) {
         AssertionIR ir;
+        ir.scope = &contextSym;
         switch (stmt.assertionKind) {
             case AssertionKind::Assert: ir.kind = DirectiveKind::Assert; break;
             case AssertionKind::Assume: ir.kind = DirectiveKind::Assume; break;
@@ -104,6 +105,10 @@ public:
                 if (sawClock)
                     unsupported("multiple clocks", sourceRange(*p));
                 ir.clockEvent = clockText(c->clocking);
+                if (auto ev = c->clocking.as_if<SignalEventControl>()) {
+                    ir.clockExpr = &ev->expr;
+                    ir.clockPosedge = ev->edge == EdgeKind::PosEdge;
+                }
                 sawClock = true;
                 p = &c->expr;
             }
@@ -111,6 +116,7 @@ public:
                 if (!ir.disableText.empty())
                     unsupported("nested disable iff", sourceRange(*p));
                 ir.disableText = leafText(d->condition, /*allowSampled=*/false);
+                ir.disableExpr = &d->condition;
                 p = &d->expr;
             }
             else {
@@ -206,7 +212,7 @@ private:
                 if (s.repetition)
                     unsupported("sequence repetition [*], [->], [=] is v1.1", sourceRange(e));
                 Chain c;
-                c.elems.push_back(ChainElem{0, 0, Leaf{leafText(s.expr, true)}});
+                c.elems.push_back(ChainElem{0, 0, Leaf{leafText(s.expr, true), &s.expr}});
                 return c;
             }
             case AssertionExprKind::SequenceConcat: {
@@ -337,6 +343,9 @@ private:
         h.exprText = leafText(arg, false);
         h.width = width;
         h.depth = depth;
+        h.function = std::string(name);
+        h.call = &call;
+        h.arg = &arg;
         helpers.push_back(h);
 
         // $rose/$fell look at bit 0; a 1-bit wire cannot be indexed in every tool.
@@ -424,6 +433,13 @@ struct Collector : public ASTVisitor<Collector, VisitFlags::Statements> {
         site.module = module;
         site.loc = toLocation(sm, stmt.sourceRange.start());
         site.replaceRange = key ? key->sourceRange() : stmt.sourceRange;
+        site.stmt = &stmt;
+        if (body && body->parentInstance) {
+            // "top.a.b" -> "a.b": paths in the flattened model are relative to the top.
+            auto path = body->parentInstance->getHierarchicalPath();
+            auto dot = path.find('.');
+            site.instancePath = dot == std::string::npos ? "" : path.substr(dot + 1);
+        }
 
         std::string tag = site.label;
         if (tag.empty())

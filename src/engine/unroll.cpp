@@ -21,14 +21,11 @@ struct Unroller::Impl {
 
 Unroller::Unroller(const TransitionSystem& ts, bool freeInit) :
     ts(ts), freeInit(freeInit), impl(new Impl) {
-    uint32_t n = ts.aig.numVars();
-    latchOfVar.assign(n, -1);
-    bitOfVar.assign(n, -1);
-    for (size_t i = 0; i < ts.latches.size(); i++)
-        for (size_t b = 0; b < ts.latches[i].cur.size(); b++) {
-            latchOfVar[varOf(ts.latches[i].cur[b])] = int32_t(i);
-            bitOfVar[varOf(ts.latches[i].cur[b])] = int32_t(b);
-        }
+    syncLatches();
+    // "Lucky phases" preprocessing runs at the start of every solve() and does
+    // not poll the terminator; on a large incremental unrolling it went
+    // quadratic and blew through the time budget (M4). Useless for BMC anyway.
+    impl->solver.set("lucky", 0);
     trueVar = nextVar++;
     addClause({trueVar});
     impl->solver.connect_terminator(&impl->deadline);
@@ -37,6 +34,27 @@ Unroller::Unroller(const TransitionSystem& ts, bool freeInit) :
 Unroller::~Unroller() { delete impl; }
 
 void Unroller::setDeadline(std::chrono::steady_clock::time_point t) { impl->deadline.at = t; }
+
+void Unroller::syncLatches() {
+    uint32_t n = ts.aig.numVars();
+    latchOfVar.assign(n, -1);
+    bitOfVar.assign(n, -1);
+    for (size_t i = 0; i < ts.latches.size(); i++)
+        for (size_t b = 0; b < ts.latches[i].cur.size(); b++) {
+            latchOfVar[varOf(ts.latches[i].cur[b])] = int32_t(i);
+            bitOfVar[varOf(ts.latches[i].cur[b])] = int32_t(b);
+        }
+}
+
+size_t Unroller::addAssumption(Lit c) {
+    int act = nextVar++;
+    for (int f = 0; f < int(map.size()); f++)
+        addClause({-act, lit(f, c)});
+    assumptions.push_back({c, act, true});
+    return assumptions.size() - 1;
+}
+
+void Unroller::setAssumptionActive(size_t id, bool active) { assumptions.at(id).active = active; }
 
 void Unroller::addClause(std::initializer_list<int> c) {
     for (int l : c)
@@ -54,6 +72,15 @@ int Unroller::lit(int frame, Lit l) {
 /// refers to its next-state logic in frame k-1, so recursion could be deep.
 int Unroller::encode(int frame, uint32_t var) {
     ensureFrame(frame);
+    // The AIG grows as a session adds monitors; frames grow with it (checked
+    // once per growth, not per call: this is the hottest path).
+    if (knownVars != ts.aig.numVars()) {
+        knownVars = ts.aig.numVars();
+        latchOfVar.resize(knownVars, -1);
+        bitOfVar.resize(knownVars, -1);
+        for (auto& m : map)
+            m.resize(knownVars, 0);
+    }
     if (int m = map[frame][var])
         return m;
     std::vector<std::pair<int, uint32_t>> stack{{frame, var}};
@@ -127,17 +154,22 @@ void Unroller::ensureFrame(int frame) {
             int l = lit(f, c);
             addClause({l});
         }
+        for (auto& a : assumptions)
+            addClause({-a.act, lit(f, a.lit)});
     }
 }
 
-int Unroller::solve(const std::vector<int>& assumptions) {
-    for (int a : assumptions)
+int Unroller::solve(const std::vector<int>& extra) {
+    for (auto& a : assumptions)
+        if (a.active)
+            impl->solver.assume(a.act);
+    for (int a : extra)
         impl->solver.assume(a);
     return impl->solver.solve();
 }
 
 int8_t Unroller::value(int frame, Lit l) const {
-    if (frame >= int(map.size()))
+    if (frame >= int(map.size()) || varOf(l) >= map[frame].size())
         return -1;
     int m = map[frame][varOf(l)];
     if (!m)

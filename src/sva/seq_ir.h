@@ -15,12 +15,20 @@
 #include <string>
 #include <vector>
 
+namespace slang::ast {
+class Expression;
+class CallExpression;
+class Symbol;
+} // namespace slang::ast
+
 namespace qfv::sva {
 
-/// A boolean leaf, as SV expression text. Sampled-value calls inside it have
-/// already been replaced by helper signal names (see SampledHelper).
+/// A boolean leaf: SV expression text (sampled-value calls replaced by helper
+/// signal names, see SampledHelper) for text emission, and the slang AST node
+/// for direct AIG emission (valid while its Compilation is alive).
 struct Leaf {
     std::string text;
+    const slang::ast::Expression* expr = nullptr;
 };
 
 /// One element of a delay chain: wait [lo, hi] cycles after the previous
@@ -47,6 +55,9 @@ struct SampledHelper {
     std::string exprText;
     uint32_t width = 1;
     uint32_t depth = 1; // number of registered stages
+    std::string function;                              // $past, $rose, ...
+    const slang::ast::CallExpression* call = nullptr;  // the call it replaces
+    const slang::ast::Expression* arg = nullptr;       // the sampled expression
 };
 
 enum class DirectiveKind { Assert, Assume, Cover };
@@ -56,6 +67,10 @@ struct AssertionIR {
     DirectiveKind kind = DirectiveKind::Assert;
     std::string clockEvent;  // e.g. "posedge clk"
     std::string disableText; // empty when there is no disable iff
+    const slang::ast::Expression* disableExpr = nullptr;
+    const slang::ast::Expression* clockExpr = nullptr;
+    bool clockPosedge = true;
+    const slang::ast::Symbol* scope = nullptr; // for constant evaluation
     Chain ante;              // empty for a plain property (always triggered)
     Chain cons;              // unused for covers
     std::vector<SampledHelper> helpers;

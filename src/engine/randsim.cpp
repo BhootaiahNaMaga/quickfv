@@ -26,7 +26,8 @@ void RandSim::evaluate(std::vector<uint64_t>& val) const {
 }
 
 void RandSim::run(std::chrono::steady_clock::time_point deadline, std::vector<bool> watch,
-                  const std::function<void(size_t, const Cex&)>& onHit) {
+                  const std::function<void(size_t, const Cex&)>& onHit,
+                  const std::vector<Lit>& extraConstraints) {
     const auto& aig = ts.aig;
     auto word = [&](const std::vector<uint64_t>& val, Lit l) {
         return val[varOf(l)] ^ (isNeg(l) ? ~0ull : 0);
@@ -65,6 +66,8 @@ void RandSim::run(std::chrono::steady_clock::time_point deadline, std::vector<bo
             for (int t = 0; t <= opts.retries; t++) {
                 uint64_t ok = ~0ull;
                 for (Lit c : ts.constraints)
+                    ok &= word(val, c);
+                for (Lit c : extraConstraints)
                     ok &= word(val, c);
                 uint64_t bad = ~ok & alive;
                 if (!bad || t == opts.retries) {

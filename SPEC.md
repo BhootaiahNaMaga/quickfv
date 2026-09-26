@@ -1,6 +1,6 @@
 # QuickFV — Agent-First Formal Pre-Check Engine
 
-**Status:** Draft v0.5 · 2026-09-25 (M0–M3 done; see `casestudy/m0_fifo/README.md`, `tests/sva_equiv/README.md`, `casestudy/m2_engine/README.md`, `casestudy/m3_vacuity/README.md`)
+**Status:** Draft v0.6 · 2026-09-25 (M0–M4 done; see `casestudy/m*/README.md`, `tests/sva_equiv/README.md`)
 **Working name:** `qfv` (CLI / daemon: `qfvd`)
 
 ---
@@ -176,7 +176,7 @@ source location**, never approximated.
 qfv session start  setup.tcl                  → {"session":"s1","load_ms":8123,"signals":1412}
 qfv check   -s s1  --file props.sv [--budget 10m] [--stream]
 qfv check   -s s1  --sva 'assert property (@(posedge clk) disable iff(!rst_n) push |-> ##1 !empty);'
-qfv assume  -s s1  --sva '...'                → adds constraint; invalidates prior PASS_BOUNDED results
+qfv assume  -s s1  --sva '...'                → adds constraint; marks prior results stale (a CEX may now violate it)
 qfv remove  -s s1  --id a7
 qfv status  -s s1  [--id a7]
 qfv trace   -s s1  --id a7  --format vcd|json|tb
@@ -205,9 +205,7 @@ assume -name a_no_push_full {@(posedge clk) full |-> !push}
 set_prove_time_limit 10m               ;# maps to the qfv budget
 prove -all
 ```
-Supported commands: `analyze`, `elaborate`, `clock`, `reset`, `assume`, `assert`, `cover`,
-`prove`, `set_prove_time_limit`, `get_property_list`, `get_property_info`. Unknown commands →
-error, never ignored. We use a subset of the JasperGold command *names* for familiarity. We make
+Supported commands (M4): `analyze` (`-sv*`, `+define+`, `+incdir+`), `elaborate` (`-top`, `-parameter`), `clock`, `reset` (`-expression`), `assume`/`assert`/`cover` (`-name`), `prove`, `set_prove_time_limit`, `clear`, `set`/`$var`, with Tcl quoting and comments. Parsed by a Tcl-subset interpreter (`src/session/setup_file.cpp`), not an embedded libtcl, so there's nothing to install on the work server. Unknown commands → error with a line number, never ignored. We use a subset of the JasperGold command *names* for familiarity. We make
 no claim of full compatibility.
 
 ### 7.3 Tcl package
@@ -215,9 +213,7 @@ no claim of full compatibility.
 and parses the JSON, so it can be `source`d in tclsh, JasperGold's Tcl shell, or any other Tcl-based EDA tool.
 
 ### 7.4 MCP server
-A thin wrapper over the daemon socket. Tools: `load_design`, `check_assertion`, `add_assumption`,
-`remove`, `get_status`, `get_trace` (with signal filtering and a cycle window, so agents don't take in whole
-VCDs), `explain_cex` (a structured diff of the signals relevant to the assertion's cone), `export_jaspergold`.
+`qfv mcp`: an MCP server over stdio (JSON-RPC 2.0) on the same session. Tools (M4): `load_design`, `check_assertion` (lint + add + check in one call; accepts bare properties), `add_assumption`, `check_all`, `get_trace` (with signal filtering and a cycle window, so agents don't take in whole VCDs), `list_assertions`, `remove`, `export_jaspergold`. `explain_cex` (a structured diff of the signals in the assertion's cone) is deferred.
 
 ### 7.5 JasperGold handoff (`export-jg`)
 Emits a Tcl script with the original `analyze`/`elaborate`/`clock`/`reset`, all assumptions, and
@@ -296,7 +292,7 @@ Each milestone ends with a check against the oracles before the next one starts.
 | **M1** ✅ | Session skeleton plus **SVA compiler** (slang → NFA → monitor, emitted as Verilog for inspection) plus **T0 lint** | Done: `qfv lint`/`compile-sva`/`check-sva`. 68/71 equivalence cases pass and 0 fail, against three oracles (EBMC, Verilator, hand-derived golden tests), because EBMC and Verilator each deviate from IEEE 1800 on `disable iff` and ranged sequences (`tests/sva_equiv/README.md`). T0 check of a new assertion: 0.2–3 ms. Compiled FIFO monitors reproduce the M0 results exactly |
 | **M2** ✅ | Model IR (AIG), BTOR2 loading, bit-blaster, incremental BMC (`qfv bmc`) | Done: shortest CEX = rIC3 BMC on all FIFO bugs; 9/9 CEXs certified by btorsim; bit-blaster matches btorsim on 261/261 operator×width cases; shallow bugs in ms of solver time (rIC3: 30–140 ms per process run). *Moved to M4: "adding an assertion never reloads the design"* (needs direct monitor→AIG emission plus the session daemon) |
 | **M3** ✅ | **T1** vacuity (trigger goals; k-induction + rIC3 IC3 for proofs), bit-parallel random simulator, CEX outputs (JSON/VCD/BTOR2 witness/SV testbench), **RTL replay certification** | Done: 7/7 injected vacuities → VACUOUS (synthesis folding, induction k≤2, rIC3); 3/3 real triggers reachable; 17/17 FIFO CEXs confirmed by btorsim **and** Verilator replay on the original RTL+SVA; simulation finds 16- and 32-deep bugs in 3–90 ms where BMC and rIC3 timed out |
-| **M4** | JSON CLI with streaming, Tcl setup interpreter, Tcl package, MCP server, `export-jg`; **persistent session**: monitors emitted straight into the AIG (SV expression → AIG over a Yosys name map), so adding or editing an assertion never reruns Yosys | An agent completes the case-study loop only through MCP; re-checking an edited assertion needs no Yosys run |
+| **M4** ✅ | Persistent session (`qfv serve`, JSON over stdio) with monitors emitted straight into the AIG (SV expression → AIG over a Yosys name map), MCP server (`qfv mcp`), JasperGold-subset setup files, Tcl package (`tcl/qfv.tcl`), `export_jaspergold` | Done: an agent completes the case-study loop only through MCP (14/14 checks), and Yosys runs once per session; direct emission matches the Yosys flow on 46/46 properties (CEX one frame shorter), and every session CEX replays on the M1 text monitor; per-assertion check 20–90 ms + budget. Transport is stdio, not a Unix socket; setup files use a Tcl-subset parser, not embedded libtcl |
 | **M5** | Portfolio (rIC3/ABC/Pono), LIDRUP/LRAT certification, container build | Time to first CEX at or below the oracles; `--certify` passes on all PASS_BOUNDED results |
 | **M6** | Case-study report (§10) | Metrics published; the handoff Tcl is ready to try on JasperGold at work |
 | **v2** | k-induction (`PROVEN`) with Certifaiger, simulation-seeded BMC, SVA v1.1 constructs, liveness via liveness-to-safety, Lean-verified unroller, word-level solving (Bitwuzla) | — |
@@ -313,7 +309,8 @@ Each milestone ends with a check against the oracles before the next one starts.
 
 | Risk | Mitigation |
 |---|---|
-| Name mapping: the SVA references hierarchical RTL names that Yosys flattening may rename or optimize away | Keep names in Yosys (`-keep` attributes, `write_btor -s`); T0 reports a signal as missing post-elaboration explicitly |
+| Name mapping: the SVA references hierarchical RTL names that Yosys flattening may rename or optimize away | M4: `setattr -set keep` on every wire *before* any optimization, map memories *before* flattening (the reverse order merged an array into one misnamed vector and produced a spurious CEX), `expose` every wire; the emitter refuses a name whose width disagrees with the RTL |
+| Solver state in a long session grows without bound and slows later checks | M4: rebuild the SAT encoding past 2M clauses (the model stays loaded); CaDiCaL lucky phases disabled (they ignore the time budget) |
 | Stripping concurrent SVA before Yosys while keeping `bind` and in-module assertion scope | slang produces the design text minus SVA plus a scope map; tested in M1 |
 | 2-state vs JasperGold 4-state/X semantics give different verdicts | Documented; each result is flagged; `$isunknown` handled conservatively; validated at work via `export-jg` |
 | Memories bit-blast too large | M2 maps memories to registers (`memory_map`) and rejects BTOR2 arrays; lazy array encoding in v1.1; size limits reported |
