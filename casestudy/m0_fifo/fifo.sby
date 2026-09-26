@@ -1,0 +1,32 @@
+# M0 reference flow: the same SV+SVA sources, run through several open-source
+# engines. Each task is one engine; the expected answer is the same for all.
+#   sby -f fifo.sby                     # clean design, all engines
+#   BUG=OVERFLOW sby -f fifo.sby ...    # see run_m0.sh for mutants
+[tasks]
+bmc_smtbmc  bmc smtbmc
+bmc_abc     bmc abc
+bmc_pono    bmc pono
+prove_ric3  prove ric3
+prove_abc   prove abcpdr
+
+[options]
+bmc: mode bmc
+bmc: depth 30
+prove: mode prove
+
+[engines]
+smtbmc: smtbmc yices
+abc:    abc bmc3
+pono:   btor pono
+ric3:   aiger rIC3
+abcpdr: abc pdr
+
+[script]
+plugin -i slang
+read_slang -D NO_LIVENESS BUG_DEFINE --top fifo fifo.sv fifo_1r1w_props.sv reset_env.sv
+prep -top fifo
+
+[files]
+rtl/fifo.sv
+sva/fifo_1r1w_props.sv
+env/reset_env.sv
