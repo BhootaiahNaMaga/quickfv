@@ -58,3 +58,7 @@ qfv bmc  --top fifo --clock clk --reset-expr '!reset_' \
 | `tcl/` | Tcl package |
 | `casestudy/m0…m4/` | milestone write-ups with results and lessons |
 | `tests/` | SVA equivalence (3 oracles), bit-blaster vs btorsim, session vs flow, MCP agent loop |
+
+## License
+
+MIT, see [`LICENSE`](LICENSE). Third-party tools fetched by `scripts/setup_tools.sh` keep their own licenses.
