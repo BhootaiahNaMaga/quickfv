@@ -1,4 +1,4 @@
-// qfv: QuickFV command-line entry point (M1: lint, compile-sva, check-sva).
+// qfv: QuickFV command-line entry point.
 //
 //   qfv lint        [opts] files...   T0 diagnostics + assertion inventory (JSON)
 //   qfv compile-sva [opts] -o DIR files...
@@ -7,10 +7,11 @@
 //                                     T0 for one new assertion inserted into module M
 //   qfv bmc         [opts] --top T [--reset-expr E] [--budget S] files...
 //   qfv bmc         --btor FILE [--budget S]
+//                                     vacuity + bug hunt (simulation, incremental BMC,
+//                                     k-induction, rIC3); NDJSON events, certified traces
+//   qfv sim         [opts] --top T files...   random simulation / witness replay
 //   qfv serve       [--work DIR]    session over stdio (JSON lines), used by the Tcl package
 //   qfv mcp         [--work DIR]    MCP server over stdio, for agents
-//                                     bug hunt with the built-in incremental BMC;
-//                                     NDJSON events, BTOR2 witnesses for CEXs
 //
 // opts: --top T   -D NAME[=VAL]   -I DIR   --drop-unsupported   --vacuity-covers
 //
@@ -74,7 +75,11 @@ struct Args {
     std::cerr << "qfv: " << msg << "\n"
               << "usage: qfv lint|compile-sva|check-sva [--top T] [-D N[=V]] [-I DIR] "
                  "[-o DIR] [--module M --sva TEXT] [--drop-unsupported] [--vacuity-covers] "
-                 "files...\n";
+                 "files...\n"
+                 "       qfv bmc|sim --top T --clock C [--reset-expr E] [--reset-cycles N] [--reset-free] "
+                 "[--budget S] [--max-depth K] [--replay] [--certify] [--witness FILE] [--sim S] [--work DIR] "
+                 "[--btor FILE] files...\n"
+                 "       qfv serve|mcp [--work DIR]\n";
     std::exit(2);
 }
 

@@ -3,3 +3,4 @@ build/
 work/
 *.vcd
 __pycache__/
+/*.aig
