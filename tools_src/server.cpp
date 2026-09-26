@@ -65,7 +65,7 @@ public:
         std::vector<std::string> ids;
         for (auto& i : p.value("ids", json::array()))
             ids.push_back(i);
-        return session.check(ids, p.value("budget_s", 30.0), p.value("sim_s", 0.25), emit);
+        return session.check(ids, p.value("budget_s", 30.0), p.value("sim_s", 0.25), emit, p.value("certify", false));
     }
 
     /// Agent loop in one call: lint + add + check the new assertion(s).
@@ -84,7 +84,7 @@ public:
         auto res = session.check(ids, p.value("budget_s", 30.0), p.value("sim_s", 0.25), [&](const json& e) {
             events.push_back(e);
             emit(e);
-        });
+        }, p.value("certify", false));
         out["check"] = res;
         out["results"] = events;
         return out;
@@ -156,7 +156,8 @@ json mcpTools() {
         toolSchema("check_assertion",
                    "Lint, add and check one assertion in the loaded design in a single call. Returns T0 "
                    "diagnostics, the vacuity result (is the trigger reachable?) and CEX / PASS_BOUNDED "
-                   "within the budget. PASS_BOUNDED is NOT a proof. No design reload.",
+                   "within the budget, or PROVEN (only when rIC3's proof certificate is verified by "
+                   "Certifaiger). PASS_BOUNDED is NOT a proof. No design reload.",
                    {{"sva", sva},
                     {"module", {{"type", "string"}, {"description", "module scope (default: top)"}}},
                     {"name", {{"type", "string"}}},
@@ -168,8 +169,11 @@ json mcpTools() {
                    "spurious CEX). Earlier CEX results are marked stale; re-check afterwards.",
                    {{"sva", sva}, {"module", {{"type", "string"}}}, {"name", {{"type", "string"}}}},
                    json::array({"sva"})),
-        toolSchema("check_all", "Re-check assertions (all, or the given ids) with the current assumptions.",
-                   {{"ids", {{"type", "array"}, {"items", {{"type", "string"}}}}}, {"budget_s", budget}},
+        toolSchema("check_all",
+                   "Re-check assertions (all, or the given ids) with the current assumptions. certify=true "
+                   "makes every 'no CEX at depth k' and induction answer checkable (LIDRUP, lidrup-check).",
+                   {{"ids", {{"type", "array"}, {"items", {{"type", "string"}}}}}, {"budget_s", budget},
+                    {"certify", {{"type", "boolean"}}}},
                    json::array()),
         toolSchema("get_trace",
                    "Counterexample of an assertion, optionally filtered to signals whose name contains any "

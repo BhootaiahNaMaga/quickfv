@@ -33,6 +33,7 @@
 #include "slang/text/SourceManager.h"
 #include "engine/external.h"
 #include "engine/hunt.h"
+#include "engine/portfolio.h"
 #include "engine/sim.h"
 #include "engine/trace.h"
 #include "model/ts.h"
@@ -64,6 +65,7 @@ struct Args {
     double simSeconds = 0.25;
     bool replay = false;    // re-run every trace on the RTL in Verilator
     bool noRic3 = false;    // do not use rIC3 to prove vacuity
+    bool certify = false;   // LIDRUP certificates for every UNSAT answer
 };
 
 [[noreturn]] void usage(const std::string& msg) {
@@ -126,6 +128,8 @@ Args parseArgs(int argc, char** argv) {
             a.replay = true;
         else if (s == "--no-ric3")
             a.noRic3 = true;
+        else if (s == "--certify")
+            a.certify = true;
         else if (s.rfind("-", 0) == 0)
             usage("unknown option " + s);
         else
@@ -556,32 +560,18 @@ int cmdBmc(Session& session, const Args& args) {
     ho.maxDepth = args.maxDepth;
     ho.simSeconds = args.simSeconds;
     if (!args.noRic3) {
-        // rIC3 (IC3) proves reachability goals unreachable: invariants that
-        // k-induction cannot find. Run as a subprocess on a one-goal BTOR2.
+        // Portfolio: rIC3 on every property (AIGER dump of the model). Its CEXs
+        // become our traces; its proofs count only if Certifaiger verifies them.
         auto deadline = std::chrono::steady_clock::now() +
                         std::chrono::milliseconds(int64_t(args.budget * 1000));
-        ho.externalProverName = "rIC3-ic3";
-        ho.externalProver = [&, deadline](size_t p, const std::atomic<bool>& cancel) -> std::string {
-            auto single = work + "/goal_" + std::to_string(p) + ".btor";
-            if (!writeSingleBadBtor2(btor, single, ts.props[p].btorId))
-                return "";
-            auto r = runProcess({toolPath("QFV_RIC3", "rIC3"), "-e", "ic3", single}, deadline, cancel);
-            std::ofstream(work + "/goal_" + std::to_string(p) + ".log")
-                << (r.finished ? "finished, exit " + std::to_string(r.exitCode) : "killed") << "\n"
-                << r.output;
-            if (!r.finished)
-                return "";
-            // The verdict is a line of its own ("UNSAT"/"SAT"); logs go to stderr,
-            // which runProcess merges in.
-            std::istringstream lines(r.output);
-            for (std::string line; std::getline(lines, line);) {
-                if (line == "UNSAT")
-                    return "UNREACHABLE";
-                if (line == "SAT")
-                    return "REACHABLE";
-            }
-            return "";
+        ho.externalEngineName = "rIC3";
+        ho.externalEngine = [&, deadline](size_t p, const std::atomic<bool>& cancel) {
+            return runRic3(ts, p, {}, work + "/portfolio", deadline, cancel);
         };
+    }
+    if (args.certify) {
+        ho.certifyDir = work + "/certificate";
+        fs::create_directories(ho.certifyDir);
     }
     Hunt hunt(ts, ho);
     ReplayOptions ro;
@@ -643,8 +633,11 @@ int cmdBmc(Session& session, const Args& args) {
             }
             w.endObject();
         }
-        else if (r.status == "UNREACHABLE") {
-            w.field("induction_k", r.inductionK);
+        else if (r.status == "UNREACHABLE" || r.status == "PROVEN") {
+            if (r.engine == "induction")
+                w.field("induction_k", r.inductionK);
+            else
+                w.field("proof_certified", r.proofCertified).field("detail", r.detail);
         }
         else {
             w.field("depth_reached", r.depthChecked).field("note", "bounded: not a proof");
@@ -655,6 +648,20 @@ int cmdBmc(Session& session, const Args& args) {
 
     for (auto& f : replays)
         f.wait();
+    if (args.certify) {
+        // Every UNSAT answer the verdicts rely on ("no CEX at depth k", induction
+        // steps) must be verified by lidrup-check against our own query log.
+        JsonWriter c;
+        c.beginObject().field("event", "certificate").field("dir", ho.certifyDir);
+        c.key("solvers").beginArray();
+        for (auto& r : certifyBounded(ho.certifyDir, hunt.bmcClaims, hunt.stepClaims))
+            c.beginObject().field("solver", r.solver).field("unsat_claims", uint64_t(r.unsatClaims))
+                .field("lidrup_check", r.result).endObject();
+        c.endArray()
+            .field("trusted_base", "Yosys+slang elaboration and the BTOR2-to-CNF encoding (see SPEC section 8)")
+            .endObject();
+        emit(c);
+    }
 
     // One verdict per assertion (SPEC section 4.2).
     std::map<std::string, std::pair<const Verdict*, const Verdict*>> byLabel; // (assert, trigger)
@@ -706,8 +713,12 @@ int cmdBmc(Session& session, const Args& args) {
             verdict = folded[label];
         else if (as && as->status == "CEX")
             verdict = "CEX";
-        else if (tr && tr->status == "UNREACHABLE")
+        // Vacuity outranks a proof: an assertion that holds only because its
+        // trigger never fires tells nothing about the design.
+        else if ((as && as->status == "VACUOUS") || (tr && tr->status == "UNREACHABLE"))
             verdict = "VACUOUS";
+        else if (as && as->status == "PROVEN")
+            verdict = "PROVEN";
         else if (tr && tr->status == "NOT_REACHED")
             verdict = "POSSIBLY_VACUOUS";
         else if (as)

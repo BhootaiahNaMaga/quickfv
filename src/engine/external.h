@@ -18,7 +18,7 @@ struct ProcessResult {
 
 ProcessResult runProcess(const std::vector<std::string>& argv,
                          std::chrono::steady_clock::time_point deadline,
-                         const std::atomic<bool>& cancel);
+                         const std::atomic<bool>& cancel, const std::string& cwd = "");
 
 /// Copies a BTOR2 file keeping only the `bad` line with id `badId`, so an
 /// external engine checks exactly one property.

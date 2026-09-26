@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "engine/portfolio.h"
 #include "engine/trace.h"
 #include "model/ts.h"
 
@@ -29,11 +30,10 @@ struct HuntOptions {
     double simSeconds = 0.25;   // random-simulation slice at the start
     int maxInductionDepth = 20; // k-induction attempts for reachability goals
     uint64_t seed = 1;
-    /// Optional unbounded prover for reachability goals, run concurrently
-    /// (e.g. rIC3's IC3 as a subprocess). Returns "UNREACHABLE", "REACHABLE" or
-    /// "" (unknown); must stop promptly when `cancel` becomes true.
-    std::function<std::string(size_t prop, const std::atomic<bool>& cancel)> externalProver;
-    std::string externalProverName = "external";
+    /// Optional external engine (the portfolio: rIC3 on an AIGER dump), run
+    /// concurrently on every checked property; must stop promptly on `cancel`.
+    std::function<ExternalVerdict(size_t prop, const std::atomic<bool>& cancel)> externalEngine;
+    std::string externalEngineName = "external";
     /// Session mode: only these properties are checked (empty = all), and the
     /// session's switchable assumptions constrain random simulation.
     std::vector<size_t> onlyProps;
@@ -41,16 +41,32 @@ struct HuntOptions {
     /// trigger prop -> its assertion's prop. When a trigger is proven
     /// unreachable the assertion can never fail, so its search stops (VACUOUS).
     std::map<size_t, size_t> assertOfTrigger;
+    /// Non-empty: certify every UNSAT answer (fresh unrollers writing
+    /// <dir>/bmc.{icnf,lidrup} and <dir>/step.{icnf,lidrup}); check them with
+    /// certifyBounded() after run().
+    std::string certifyDir;
 };
 
+/// Runs lidrup-check on the certificates of a certified hunt. Returns
+/// per-solver {"unsat_claims", "lidrup_check"} as a small report string map.
+struct CertReport {
+    std::string solver;
+    size_t unsatClaims = 0;
+    std::string result; // verified | FAILED: ... | unavailable
+};
+std::vector<CertReport> certifyBounded(const std::string& dir, size_t bmcClaims, size_t stepClaims);
+
 struct Verdict {
-    // Assert: CEX | PASS_BOUNDED | VACUOUS.   Reach: REACHABLE | UNREACHABLE | NOT_REACHED.
+    // Assert: CEX | PASS_BOUNDED | VACUOUS | PROVEN (certified only).
+    // Reach:  REACHABLE | UNREACHABLE | NOT_REACHED.
     std::string status = "RUNNING";
     std::string engine;      // sim | bmc | induction
     int depthChecked = -1;   // BMC: no hit in frames 0..depthChecked
     int inductionK = -1;     // UNREACHABLE: proved k-inductive
     double ms = 0;
     bool minimized = false;  // a shorter trace replaced an earlier one
+    bool proofCertified = false; // PROVEN / UNREACHABLE: an independent checker verified it
+    std::string detail;          // external engine / certificate notes
     std::optional<Cex> cex;
 };
 
@@ -72,6 +88,7 @@ public:
     std::vector<Verdict> run(const Event& onEvent);
 
     uint64_t simCycles = 0;
+    size_t bmcClaims = 0, stepClaims = 0; // UNSAT answers recorded (certified runs)
 
 private:
     const TransitionSystem& ts;

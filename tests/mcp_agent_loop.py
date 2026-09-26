@@ -75,7 +75,7 @@ def main():
     r, err, ms = m.tool("check_assertion", module="fifo_1r1w_tb", name="a_push_nonempty_v2",
                         sva="wr_push && !rd_pop |=> !fifo_empty", disable_iff="tb_reset", budget_s=5)
     v = r["check"]["verdicts"].get("a_push_nonempty_v2")
-    expect(v == "PASS_BOUNDED", f"verdict {v} ({ms:.0f} ms incl. 5 s budget)")
+    expect(v in ("PASS_BOUNDED", "PROVEN"), f"verdict {v} ({ms:.0f} ms; PROVEN needs a verified certificate)")
     trig = [e for e in r["results"] if e["goal"] == "trigger-reachable"]
     expect(trig and trig[0]["status"] == "REACHABLE", "trigger reachable (assertion is not vacuous)")
 
@@ -102,7 +102,7 @@ def main():
     stale = [a["id"] for a in r["assertions"] if a.get("last", {}).get("stale")]
     expect("fifo_2" in stale, f"earlier results marked stale: {stale}")
     r, err, ms = m.tool("check_all", ids=["fifo_2"], budget_s=5)
-    expect(r["verdicts"].get("fifo_2") == "PASS_BOUNDED",
+    expect(r["verdicts"].get("fifo_2") in ("PASS_BOUNDED", "PROVEN"),
            f"fifo_2 under the assumption: {r['verdicts'].get('fifo_2')} (the bug needs a push+pop) ({ms:.0f} ms)")
 
     print("\n8. agent removes the assumption; the bug is back")

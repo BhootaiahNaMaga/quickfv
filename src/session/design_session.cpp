@@ -9,6 +9,7 @@
 
 #include "engine/external.h"
 #include "engine/hunt.h"
+#include "engine/portfolio.h"
 #include "engine/unroll.h"
 #include "lint.h"
 #include "model/btor2_write.h"
@@ -406,7 +407,8 @@ json DesignSession::list() const {
     return {{"assertions", a}};
 }
 
-json DesignSession::check(const std::vector<std::string>& ids, double budget, double sim, const Emit& emit) {
+json DesignSession::check(const std::vector<std::string>& ids, double budget, double sim, const Emit& emit,
+                          bool certify) {
     if (!ts)
         return {{"ok", false}, {"error", "no design loaded"}};
     auto t0 = Clock::now();
@@ -457,20 +459,14 @@ json DesignSession::check(const std::vector<std::string>& ids, double budget, do
     ho.simConstraints = assumptions;
     if (!std::getenv("QFV_NO_RIC3")) {
         auto deadline = Clock::now() + std::chrono::milliseconds(int64_t(budget * 1000));
-        ho.externalProverName = "rIC3-ic3";
-        ho.externalProver = [this, dir, assumptions, deadline](size_t p, const std::atomic<bool>& cancel) {
-            auto goal = dir + "/goal_" + std::to_string(p) + ".btor";
-            writeBtor2WithConstraints(*ts, goal, assumptions, p);
-            auto r = runProcess({tool("QFV_RIC3", "rIC3"), "-e", "ic3", goal}, deadline, cancel);
-            std::istringstream lines(r.output);
-            for (std::string l; std::getline(lines, l);) {
-                if (l == "UNSAT")
-                    return std::string("UNREACHABLE");
-                if (l == "SAT")
-                    return std::string("REACHABLE");
-            }
-            return std::string();
+        ho.externalEngineName = "rIC3";
+        ho.externalEngine = [this, dir, assumptions, deadline](size_t p, const std::atomic<bool>& cancel) {
+            return runRic3(*ts, p, assumptions, dir + "/portfolio", deadline, cancel);
         };
+    }
+    if (certify) {
+        ho.certifyDir = dir + "/certificate";
+        fs::create_directories(ho.certifyDir);
     }
     Hunt hunt(*ts, ho);
     hunt.useUnrollers(bmc.get(), step.get());
@@ -503,8 +499,12 @@ json DesignSession::check(const std::vector<std::string>& ids, double budget, do
                            {"witness", base + ".wit"}, {"model", dir + "/model.btor"}};
             ev["certified"] = {{"btorsim", reached.find(" " + want + " ") != std::string::npos ? "confirmed" : "NOT-REPRODUCED"}};
         }
-        else if (r.status == "UNREACHABLE") {
+        else if (r.status == "UNREACHABLE" || r.status == "PROVEN") {
             ev["proof"] = r.engine == "induction" ? "k-induction, k=" + std::to_string(r.inductionK) : r.engine;
+            if (r.engine != "induction") {
+                ev["proof_certified"] = r.proofCertified;
+                ev["detail"] = r.detail;
+            }
         }
         else {
             ev["depth_reached"] = r.depthChecked;
@@ -526,10 +526,11 @@ json DesignSession::check(const std::vector<std::string>& ids, double budget, do
             v = tr->status == "REACHABLE" ? "COVERED" : tr->status == "UNREACHABLE" ? "UNREACHABLE" : "NOT_COVERED";
         else if (as && as->status == "CEX")
             v = "CEX";
-        else if (as && as->status == "VACUOUS")
+        // Vacuity outranks a proof (a vacuous proof says nothing about the design).
+        else if ((as && as->status == "VACUOUS") || (tr && tr->status == "UNREACHABLE"))
             v = "VACUOUS";
-        else if (tr && tr->status == "UNREACHABLE")
-            v = "VACUOUS";
+        else if (as && as->status == "PROVEN")
+            v = "PROVEN";
         else if (tr && tr->status == "NOT_REACHED")
             v = "POSSIBLY_VACUOUS";
         else
@@ -542,7 +543,14 @@ json DesignSession::check(const std::vector<std::string>& ids, double budget, do
         e->last = last;
         summary[e->id] = v;
     }
+    json certificate = nullptr;
+    if (certify) {
+        certificate = json::array();
+        for (auto& r : certifyBounded(ho.certifyDir, hunt.bmcClaims, hunt.stepClaims))
+            certificate.push_back({{"solver", r.solver}, {"unsat_claims", r.unsatClaims}, {"lidrup_check", r.result}});
+    }
     return {{"ok", true}, {"ms", msSinceT(t0)}, {"sim_cycles", hunt.simCycles}, {"verdicts", summary},
+            {"certificate", certificate},
             {"missing", missing}, {"assumptions_active", assumptions.size()},
             {"solver_rebuilds", rebuilds}};
 }

@@ -65,6 +65,7 @@ add_library(qfv_core
   src/model/btor2_load.cpp
   src/engine/unroll.cpp
   src/engine/external.cpp
+  src/engine/portfolio.cpp
   src/engine/hunt.cpp
   src/engine/randsim.cpp
   src/engine/trace.cpp

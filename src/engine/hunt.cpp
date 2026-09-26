@@ -1,8 +1,10 @@
 #include "engine/hunt.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <future>
 #include <memory>
+#include <sys/wait.h>
 
 #include "engine/randsim.h"
 #include "engine/unroll.h"
@@ -61,12 +63,21 @@ std::vector<Verdict> Hunt::run(const Event& onEvent) {
         open += !d;
 
     std::unique_ptr<Unroller> ownBmc, ownStep;
-    if (!extBmc) {
-        ownBmc = std::make_unique<Unroller>(ts, /*freeInit=*/false);
-        ownStep = std::make_unique<Unroller>(ts, /*freeInit=*/true);
+    bool useOwn = !extBmc || !opts.certifyDir.empty(); // certificates need a fresh solver
+    if (useOwn) {
+        std::string cb = opts.certifyDir.empty() ? "" : opts.certifyDir + "/bmc";
+        std::string cs = opts.certifyDir.empty() ? "" : opts.certifyDir + "/step";
+        ownBmc = std::make_unique<Unroller>(ts, /*freeInit=*/false, cb);
+        ownStep = std::make_unique<Unroller>(ts, /*freeInit=*/true, cs);
+        if (extBmc) { // session mode: carry its switchable assumptions over
+            for (Lit c : opts.simConstraints) {
+                ownBmc->addAssumption(c);
+                ownStep->addAssumption(c);
+            }
+        }
     }
-    Unroller& bmc = extBmc ? *extBmc : *ownBmc;
-    Unroller& step = extStep ? *extStep : *ownStep;
+    Unroller& bmc = useOwn ? *ownBmc : *extBmc;
+    Unroller& step = useOwn ? *ownStep : *extStep;
     bmc.setDeadline(deadline);
     step.setDeadline(deadline);
 
@@ -143,31 +154,55 @@ std::vector<Verdict> Hunt::run(const Event& onEvent) {
         simCycles = sim.cyclesSimulated();
     }
 
-    // External unbounded prover for reachability goals, concurrently.
+    // Portfolio: an external engine on every open property, concurrently.
     auto cancel = std::make_shared<std::atomic<bool>>(false);
-    std::vector<std::future<std::string>> external(n);
-    if (opts.externalProver)
+    std::vector<std::future<ExternalVerdict>> external(n);
+    if (opts.externalEngine)
         for (size_t p = 0; p < n; p++)
-            if (!done[p] && ts.props[p].kind == Kind::Reach)
+            if (!done[p] || shortenBelow[p] >= 0)
                 external[p] = std::async(std::launch::async, [this, p, cancel] {
-                    return opts.externalProver(p, *cancel);
+                    return opts.externalEngine(p, *cancel);
                 });
     auto pollExternal = [&] {
         for (size_t p = 0; p < n; p++) {
             if (!external[p].valid() ||
                 external[p].wait_for(std::chrono::seconds(0)) != std::future_status::ready)
                 continue;
-            auto res = external[p].get();
-            if (done[p] || res != "UNREACHABLE")
-                continue; // a REACHABLE claim still needs our own witness trace
+            auto ev = external[p].get();
             auto& r = v[p];
-            r.status = "UNREACHABLE";
-            r.engine = opts.externalProverName;
-            r.ms = ms();
-            done[p] = true;
-            open--;
-            onEvent(p, r);
-            settleVacuous(p, opts.externalProverName);
+            bool isAssert = ts.props[p].kind == Kind::Assert;
+            if (ev.kind == ExternalVerdict::Fails && ev.cex) {
+                if (done[p] && (!r.cex || r.cex->depth <= ev.cex->depth))
+                    continue; // we already have a trace at least as short
+                bool had = done[p];
+                r.status = hitStatus(ts.props[p].kind);
+                r.engine = opts.externalEngineName;
+                r.cex = ev.cex;
+                r.ms = ms();
+                r.minimized = had;
+                r.detail = ev.detail;
+                if (!had)
+                    open--;
+                done[p] = true;
+                shortenBelow[p] = ev.cex->depth; // BMC keeps looking for a shorter one
+                onEvent(p, r);
+            }
+            else if (ev.kind == ExternalVerdict::Holds && !done[p]) {
+                if (isAssert && !ev.certified) {
+                    r.detail = ev.detail; // an uncertified proof is never reported as PROVEN
+                    continue;
+                }
+                r.status = isAssert ? "PROVEN" : "UNREACHABLE";
+                r.engine = opts.externalEngineName;
+                r.proofCertified = ev.certified;
+                r.detail = ev.detail;
+                r.ms = ms();
+                done[p] = true;
+                open--;
+                onEvent(p, r);
+                if (!isAssert)
+                    settleVacuous(p, opts.externalEngineName);
+            }
         }
     };
 
@@ -175,6 +210,7 @@ std::vector<Verdict> Hunt::run(const Event& onEvent) {
     bool outOfTime = Clock::now() >= deadline;
     auto wanted = [&](size_t p, int k) { return !done[p] || k < shortenBelow[p]; };
 
+    int bmcDone = -1; // every wanted property has been checked in frames 0..bmcDone
     for (int k = 0; k <= opts.maxDepth && !outOfTime; k++) {
         bool any = false;
         for (size_t p = 0; p < n; p++)
@@ -214,11 +250,14 @@ std::vector<Verdict> Hunt::run(const Event& onEvent) {
                 break;
             }
         }
+        if (!outOfTime)
+            bmcDone = k;
     }
 
-    // BMC is out of depth or time: give still-running provers the rest of the budget.
+    // BMC is out of depth or time: give still-running engines the rest of the budget.
+    // (A trace is already minimal once BMC has cleared every shorter depth.)
     for (size_t p = 0; p < n; p++)
-        if (!done[p] && external[p].valid())
+        if ((!done[p] || shortenBelow[p] - 1 > bmcDone) && external[p].valid())
             external[p].wait_until(deadline);
     pollExternal();
     cancel->store(true);
@@ -235,7 +274,41 @@ std::vector<Verdict> Hunt::run(const Event& onEvent) {
         r.ms = ms();
         onEvent(p, r);
     }
+    if (useOwn && !opts.certifyDir.empty()) {
+        bmcClaims = bmc.numUnsatClaims();
+        stepClaims = step.numUnsatClaims();
+        bmc.finishCertificate();
+        step.finishCertificate();
+    }
     return v;
+}
+
+std::vector<CertReport> certifyBounded(const std::string& dir, size_t bmcClaims, size_t stepClaims) {
+    std::vector<CertReport> out;
+    const char* env = std::getenv("QFV_LIDRUP_CHECK");
+    std::string tool = env ? env : "lidrup-check";
+    for (auto [name, claims] : {std::pair{"bmc", bmcClaims}, std::pair{"step", stepClaims}}) {
+        CertReport r;
+        r.solver = name;
+        r.unsatClaims = claims;
+        std::string cmd = tool + " -q " + dir + "/" + name + ".icnf " + dir + "/" + name + ".lidrup 2>&1";
+        std::string output;
+        if (FILE* p = popen(cmd.c_str(), "r")) {
+            char buf[512];
+            while (fgets(buf, sizeof buf, p))
+                output += buf;
+            int st = pclose(p);
+            int code = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+            if (code == 0)
+                r.result = "verified";
+            else if (code == 127)
+                r.result = "unavailable (lidrup-check not found)";
+            else
+                r.result = "FAILED: " + output.substr(0, 300);
+        }
+        out.push_back(r);
+    }
+    return out;
 }
 
 } // namespace qfv

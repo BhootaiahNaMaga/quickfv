@@ -16,7 +16,7 @@ namespace qfv {
 
 ProcessResult runProcess(const std::vector<std::string>& argv,
                          std::chrono::steady_clock::time_point deadline,
-                         const std::atomic<bool>& cancel) {
+                         const std::atomic<bool>& cancel, const std::string& cwd) {
     ProcessResult r;
     // The system temp dir ($TMPDIR), not a hard-coded /tmp: sandboxed or
     // locked-down machines often forbid writing /tmp.
@@ -39,6 +39,8 @@ ProcessResult runProcess(const std::vector<std::string>& argv,
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, fd, 1);
     posix_spawn_file_actions_adddup2(&actions, fd, 2);
+    if (!cwd.empty()) // tools like aigsplit write into the current directory
+        posix_spawn_file_actions_addchdir_np(&actions, cwd.c_str());
     // Own process group, so a timeout kills the whole tree: tools are often
     // wrapper scripts (OSS CAD Suite's bin/rIC3 execs libexec/rIC3), and killing
     // only the wrapper leaves the real prover running forever.

@@ -1,6 +1,6 @@
 # QuickFV — Agent-First Formal Pre-Check Engine
 
-**Status:** Draft v0.6 · 2026-09-25 (M0–M4 done; see `casestudy/m*/README.md`, `tests/sva_equiv/README.md`)
+**Status:** Draft v0.7 · 2026-09-26 (M0–M5 done; see `casestudy/m*/README.md`, `tests/sva_equiv/README.md`)
 **Working name:** `qfv` (CLI / daemon: `qfvd`)
 
 ---
@@ -77,7 +77,7 @@ SYNTAX_ERROR | TYPE_ERROR | UNSUPPORTED        (T0)
 VACUOUS | POSSIBLY_VACUOUS | TRIVIALLY_*       (T1)  POSSIBLY_VACUOUS = no witness within budget
 CEX                                            (T2)  always carries a replay-verified trace
 PASS_BOUNDED                                   (T2)  lint-clean ∧ reachable ∧ no CEX in budget
-PROVEN                                         (v2)  k-induction / portfolio IC3, certificate checked
+PROVEN                                         (M5)  portfolio IC3 (rIC3), witness circuit verified by Certifaiger
 ERROR                                                internal failure; never reported as a pass
 ```
 
@@ -229,8 +229,8 @@ a small, independent checker validates.**
 |---|---|---|---|
 | `CEX` | Input trace from reset | (1) `btorsim` on the BTOR2; (2) **replay on the original RTL** with the generated SV testbench run in Verilator `--assert` (Icarus has no concurrent SVA) plus the assertion. (2) is ground truth and also catches bugs in elaboration and the SVA compiler | Always, before reporting |
 | `REACHABLE` (T1) | Cover witness trace | Same replay | Always |
-| No CEX to depth k | CaDiCaL **LIDRUP** incremental proof (fast) or per-depth CNF + **LRAT** | `lidrup-check` (default); `cake_lpr` (CakeML, verified) or Lean's LRAT checker (`--certify=verified`) | Opt-in (`--certify`) |
-| `PROVEN` (v2) | Inductive invariant / witness circuit | Certifaiger (AIGER) / Cerbtora (BTOR2) | Always, for PROVEN |
+| No CEX to depth k (and induction steps) | CaDiCaL **LIDRUP** proof + our own interaction log (every clause, query, claimed answer) | `lidrup-check` (M5; tamper-tested). A verified checker (cake_lpr / Lean LRAT) is still future work | Opt-in (`--certify`) |
+| `PROVEN` | rIC3 witness circuit on our AIGER model | Certifaiger + aigsplit + aigtocnf + kissat (M5; tamper-tested) | Always: an uncertified proof is never reported |
 
 **The remaining gap:** an UNSAT proof shows the *CNF* has no solution, not that the CNF encodes the
 RTL faithfully. We close it in layers:
@@ -293,7 +293,7 @@ Each milestone ends with a check against the oracles before the next one starts.
 | **M2** ✅ | Model IR (AIG), BTOR2 loading, bit-blaster, incremental BMC (`qfv bmc`) | Done: shortest CEX = rIC3 BMC on all FIFO bugs; 9/9 CEXs certified by btorsim; bit-blaster matches btorsim on 261/261 operator×width cases; shallow bugs in ms of solver time (rIC3: 30–140 ms per process run). *Moved to M4: "adding an assertion never reloads the design"* (needs direct monitor→AIG emission plus the session daemon) |
 | **M3** ✅ | **T1** vacuity (trigger goals; k-induction + rIC3 IC3 for proofs), bit-parallel random simulator, CEX outputs (JSON/VCD/BTOR2 witness/SV testbench), **RTL replay certification** | Done: 7/7 injected vacuities → VACUOUS (synthesis folding, induction k≤2, rIC3); 3/3 real triggers reachable; 17/17 FIFO CEXs confirmed by btorsim **and** Verilator replay on the original RTL+SVA; simulation finds 16- and 32-deep bugs in 3–90 ms where BMC and rIC3 timed out |
 | **M4** ✅ | Persistent session (`qfv serve`, JSON over stdio) with monitors emitted straight into the AIG (SV expression → AIG over a Yosys name map), MCP server (`qfv mcp`), JasperGold-subset setup files, Tcl package (`tcl/qfv.tcl`), `export_jaspergold` | Done: an agent completes the case-study loop only through MCP (14/14 checks), and Yosys runs once per session; direct emission matches the Yosys flow on 46/46 properties (CEX one frame shorter), and every session CEX replays on the M1 text monitor; per-assertion check 20–90 ms + budget. Transport is stdio, not a Unix socket; setup files use a Tcl-subset parser, not embedded libtcl |
-| **M5** | Portfolio (rIC3/ABC/Pono), LIDRUP/LRAT certification, container build | Time to first CEX at or below the oracles; `--certify` passes on all PASS_BOUNDED results |
+| **M5** ✅ | Portfolio (rIC3 per property on an AIGER dump; CEXs parsed into our traces, proofs checked by Certifaiger), LIDRUP certification of every UNSAT answer (`--certify`, lidrup-check against our own query log), container | Done: time to first CEX at or below rIC3 in every benchmark case (<10 ms vs 0.06 s–timeout); certified PROVEN on clean FIFOs (0.9–1.0 s, vs rIC3 alone 0.33 s / 10 s / timeout); `--certify` verified on all PASS_BOUNDED results; all certificate checks shown to reject tampered inputs. ABC and Pono not integrated (rIC3 covers IC3/BMC/k-induction); Dockerfile written but **not built** (no Docker on the dev machine) |
 | **M6** | Case-study report (§10) | Metrics published; the handoff Tcl is ready to try on JasperGold at work |
 | **v2** | k-induction (`PROVEN`) with Certifaiger, simulation-seeded BMC, SVA v1.1 constructs, liveness via liveness-to-safety, Lean-verified unroller, word-level solving (Bitwuzla) | — |
 

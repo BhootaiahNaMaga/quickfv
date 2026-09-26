@@ -9,6 +9,8 @@
 #pragma once
 
 #include <chrono>
+#include <cstdio>
+#include <string>
 #include <vector>
 
 #include "model/ts.h"
@@ -21,7 +23,11 @@ namespace qfv {
 
 class Unroller {
 public:
-    Unroller(const TransitionSystem& ts, bool freeInit);
+    /// With `certBase` set, the unroller is certified from its first clause:
+    /// CaDiCaL writes a LIDRUP proof to <certBase>.lidrup and we independently
+    /// record every clause, query and claimed result to <certBase>.icnf, so that
+    /// `lidrup-check icnf lidrup` verifies every UNSAT answer (SPEC section 8).
+    Unroller(const TransitionSystem& ts, bool freeInit, const std::string& certBase = "");
     ~Unroller();
     Unroller(const Unroller&) = delete;
     Unroller& operator=(const Unroller&) = delete;
@@ -48,6 +54,12 @@ public:
     /// literal, so it can be turned off without rebuilding the solver.
     size_t addAssumption(Lit c);
     void setAssumptionActive(size_t id, bool active);
+    /// Closes the certificate files (also done by the destructor).
+    void finishCertificate();
+    bool certified() const { return !certBase.empty(); }
+    const std::string& certificateBase() const { return certBase; }
+    size_t numUnsatClaims() const { return unsatClaims; }
+
     size_t numVars() const { return size_t(nextVar - 1); }
     size_t numClauses() const { return clauses; }
 
@@ -69,6 +81,11 @@ private:
     };
     std::vector<Assumption> assumptions;
     uint32_t knownVars = 0;
+    FILE* icnf = nullptr;
+    std::string certBase;
+    long lastQueryOffset = -1;  // icnf offset of the last query line
+    bool lastQueryUnknown = false;
+    size_t unsatClaims = 0;
     int nextVar = 1;
     int trueVar = 0;
     size_t clauses = 0;

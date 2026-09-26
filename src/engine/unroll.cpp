@@ -1,5 +1,9 @@
 #include "engine/unroll.h"
 
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
+
 #include "cadical.hpp"
 
 namespace qfv {
@@ -19,9 +23,20 @@ struct Unroller::Impl {
     Deadline deadline;
 };
 
-Unroller::Unroller(const TransitionSystem& ts, bool freeInit) :
-    ts(ts), freeInit(freeInit), impl(new Impl) {
+Unroller::Unroller(const TransitionSystem& ts, bool freeInit, const std::string& certBase) :
+    ts(ts), freeInit(freeInit), impl(new Impl), certBase(certBase) {
     syncLatches();
+    if (!certBase.empty()) {
+        // Tracing must start before the first clause. Quiet: CaDiCaL would print
+        // "c opening file" on stdout, which is our NDJSON event stream.
+        impl->solver.set("quiet", 1);
+        impl->solver.set("lidrup", 1);
+        impl->solver.set("binary", 0);
+        if (!impl->solver.trace_proof((certBase + ".lidrup").c_str()) ||
+            !(icnf = std::fopen((certBase + ".icnf").c_str(), "w")))
+            throw std::runtime_error("cannot write certificate files " + certBase + ".*");
+        std::fprintf(icnf, "p icnf\n");
+    }
     // "Lucky phases" preprocessing runs at the start of every solve() and does
     // not poll the terminator; on a large incremental unrolling it went
     // quadratic and blew through the time budget (M4). Useless for BMC anyway.
@@ -31,7 +46,47 @@ Unroller::Unroller(const TransitionSystem& ts, bool freeInit) :
     impl->solver.connect_terminator(&impl->deadline);
 }
 
-Unroller::~Unroller() { delete impl; }
+Unroller::~Unroller() {
+    finishCertificate();
+    delete impl;
+}
+
+void Unroller::finishCertificate() {
+    if (!icnf)
+        return;
+    std::fclose(icnf);
+    icnf = nullptr;
+    impl->solver.close_proof_trace();
+    if (!lastQueryUnknown || lastQueryOffset < 0)
+        return;
+    // The last query was cut off by the time budget. It proves nothing, and the
+    // checker cannot pair its UNKNOWN answer, so both files are cut back to just
+    // before it: what remains covers every answer the verdicts rely on.
+    std::filesystem::resize_file(certBase + ".icnf", std::uintmax_t(lastQueryOffset));
+    auto proof = certBase + ".lidrup";
+    std::ifstream in(proof, std::ios::binary | std::ios::ate);
+    std::streamoff size = in.tellg(), cut = -1;
+    const std::streamoff chunk = 1 << 20;
+    std::string buf;
+    for (std::streamoff end = size; end > 0 && cut < 0;) {
+        std::streamoff start = std::max<std::streamoff>(0, end - chunk);
+        buf.resize(size_t(end - start + 2));
+        in.seekg(start);
+        in.read(buf.data(), end - start);
+        buf.resize(size_t(in.gcount()));
+        for (size_t i = buf.size(); i-- > 0;)
+            if (buf[i] == 'q' && i + 1 < buf.size() && buf[i + 1] == ' ' && (start + std::streamoff(i) == 0 || (i > 0 && buf[i - 1] == '\n'))) {
+                cut = start + std::streamoff(i);
+                break;
+            }
+        end = start + 1; // overlap by one byte so a line start at a chunk edge is seen
+        if (start == 0)
+            break;
+    }
+    in.close();
+    if (cut >= 0)
+        std::filesystem::resize_file(proof, std::uintmax_t(cut));
+}
 
 void Unroller::setDeadline(std::chrono::steady_clock::time_point t) { impl->deadline.at = t; }
 
@@ -61,6 +116,12 @@ void Unroller::addClause(std::initializer_list<int> c) {
         impl->solver.add(l);
     impl->solver.add(0);
     clauses++;
+    if (icnf) {
+        std::fputc('i', icnf);
+        for (int l : c)
+            std::fprintf(icnf, " %d", l);
+        std::fprintf(icnf, " 0\n");
+    }
 }
 
 int Unroller::lit(int frame, Lit l) {
@@ -160,12 +221,45 @@ void Unroller::ensureFrame(int frame) {
 }
 
 int Unroller::solve(const std::vector<int>& extra) {
+    std::vector<int> all;
     for (auto& a : assumptions)
         if (a.active)
-            impl->solver.assume(a.act);
-    for (int a : extra)
+            all.push_back(a.act);
+    all.insert(all.end(), extra.begin(), extra.end());
+    for (int a : all)
         impl->solver.assume(a);
-    return impl->solver.solve();
+    int res = impl->solver.solve();
+    if (icnf) {
+        // Our own record of the query and the answer we are relying on.
+        lastQueryOffset = std::ftell(icnf);
+        lastQueryUnknown = res == 0;
+        std::fputc('q', icnf);
+        for (int a : all)
+            std::fprintf(icnf, " %d", a);
+        std::fprintf(icnf, " 0\n");
+        // lidrup-check requires a conclusion after each answer: for UNSAT the
+        // failed assumptions ('f', here all of them), for SAT values that the
+        // proof's model must agree with ('v', here the query literals, which
+        // hold in any model of the query).
+        auto conclude = [&](char type) {
+            std::fputc(type, icnf);
+            for (int a : all)
+                std::fprintf(icnf, " %d", a);
+            std::fprintf(icnf, " 0\n");
+        };
+        if (res == 20) {
+            std::fprintf(icnf, "s UNSATISFIABLE\n");
+            conclude('f');
+            unsatClaims++;
+        }
+        else if (res == 10) {
+            std::fprintf(icnf, "s SATISFIABLE\n");
+            conclude('v');
+        }
+        else
+            std::fprintf(icnf, "s UNKNOWN\n");
+    }
+    return res;
 }
 
 int8_t Unroller::value(int frame, Lit l) const {

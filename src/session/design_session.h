@@ -39,8 +39,9 @@ public:
     /// into `module` (default: top). Returns the new entries and diagnostics.
     json add(const std::string& module, const std::string& text, const std::string& source = "session");
     /// Checks the given entries (all asserts and covers if empty).
+    /// `certify`: every UNSAT answer is certified (LIDRUP + lidrup-check).
     json check(const std::vector<std::string>& ids, double budgetSeconds, double simSeconds,
-               const Emit& emit);
+               const Emit& emit, bool certify = false);
     json remove(const std::string& id);
     json list() const;
     json trace(const std::string& id, const std::vector<std::string>& signals, int fromCycle,

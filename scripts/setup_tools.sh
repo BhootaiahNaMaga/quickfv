@@ -41,4 +41,30 @@ fi
 
 [ -d "$tools/FVEval" ] || git clone -q --depth 1 https://github.com/NVlabs/FVEval.git "$tools/FVEval"
 
-echo "ok: $("$tools/oss-cad-suite/bin/yosys" -V | cut -d' ' -f1-2), rIC3 $("$tools/oss-cad-suite/bin/rIC3" --version | cut -d' ' -f2), EBMC $("$tools/hw-cbmc/src/ebmc/ebmc" --version)"
+# Certificate checkers (M5): lidrup-check for bounded claims, Certifaiger for proofs.
+if [ ! -x "$tools/lidrup-check/lidrup-check" ]; then
+    [ -d "$tools/lidrup-check" ] || git clone -q --depth 1 https://github.com/arminbiere/lidrup-check.git "$tools/lidrup-check"
+    (cd "$tools/lidrup-check" && ./configure > /dev/null && make lidrup-check > /dev/null)
+fi
+if [ ! -x "$tools/certifaiger/build/certifaiger" ]; then
+    [ -d "$tools/certifaiger" ] || git clone -q --depth 1 https://github.com/Froleyks/certifaiger.git "$tools/certifaiger"
+    cd "$tools/certifaiger"
+    git submodule update -q --init --depth 1
+    static=ON
+    if [ "$(uname -s)" = Darwin ]; then
+        # clang rejects some GCC-only warnings, macOS cannot link statically, and
+        # AIGER's extension-less 'version'/'format' files shadow C++ headers on a
+        # case-insensitive filesystem.
+        sed -i '' -e 's/-Wduplicated-cond//g; s/-Wduplicated-branches//g; s/-Wlogical-op//g; s/-Wcast-align=strict//g' util.cmake CMakeLists.txt
+        static=OFF
+        cmake -DCMAKE_BUILD_TYPE=Release -B build -DSTATIC=$static -DCHECK=ON > /dev/null
+        cmake --build build --target aiger > /dev/null 2>&1 || true
+        for f in version format; do [ -f build/_deps/aiger-src/$f ] && mv build/_deps/aiger-src/$f build/_deps/aiger-src/$f.txt; done
+    fi
+    cmake -DCMAKE_BUILD_TYPE=Release -B build -DSTATIC=$static -DCHECK=ON > /dev/null
+    cmake --build build -j --target certifaiger kissat > /dev/null
+    cd "$root"
+fi
+
+echo "ok: $("$tools/oss-cad-suite/bin/yosys" -V | cut -d' ' -f1-2), rIC3 $("$tools/oss-cad-suite/bin/rIC3" --version | cut -d' ' -f2), EBMC $("$tools/hw-cbmc/src/ebmc/ebmc" --version), lidrup-check, certifaiger"
+echo "PATH for qfv: export PATH=$tools/oss-cad-suite/bin:$tools/lidrup-check:$tools/certifaiger/build:\$PATH"
