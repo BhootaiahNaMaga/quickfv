@@ -1,6 +1,6 @@
 # QuickFV — Agent-First Formal Pre-Check Engine
 
-**Status:** Draft v0.7 · 2026-09-26 (M0–M5 done; see `casestudy/m*/README.md`, `tests/sva_equiv/README.md`)
+**Status:** v1.0 · 2026-09-26 (M0–M6 done; case-study report: `casestudy/m6_report/README.md`)
 **Working name:** `qfv` (CLI / daemon: `qfvd`)
 
 ---
@@ -39,6 +39,7 @@ The project has two goals, and both count:
 - Unbounded proof as a goal. `PROVEN` is an opportunistic bonus (v2 k-induction).
 - Liveness (`s_eventually`, `s_until`, fairness). Reported as `UNSUPPORTED`.
 - Multi-clock designs and properties. Reported as `UNSUPPORTED` in v1.
+- Latches (e.g. inferred in `always_comb`). The design is rejected with a clear message in v1 (M6: 53% of the Design2SVA FSMs have one).
 - Formally verifying the engine's source code (see §8: we certify results instead).
 - Writing an SV parser or a SAT solver.
 
@@ -163,8 +164,7 @@ source location**, never approximated.
    and the solver incrementally.
 2. **Explicit rejection beats approximation.** Unsupported SVA, multi-clock logic, X semantics and
    black boxes all produce a typed error.
-3. **2-state semantics.** X/Z are handled per the Yosys `setundef` policy (documented and
-   configurable). This is a known divergence from JasperGold and is noted in every result.
+3. **X is a free value** (M6): every X becomes an explicit free input before optimisation, as in standard formal semantics; a CEX that needs particular X values is flagged `x_dependent` (it won't reproduce in 2-state simulation).
 4. **Deterministic by default.** Seeds are fixed and recorded in every result.
 5. **Every CEX is independent evidence.** No CEX is reported until it has been replayed on the
    original RTL (§8).
@@ -294,7 +294,7 @@ Each milestone ends with a check against the oracles before the next one starts.
 | **M3** ✅ | **T1** vacuity (trigger goals; k-induction + rIC3 IC3 for proofs), bit-parallel random simulator, CEX outputs (JSON/VCD/BTOR2 witness/SV testbench), **RTL replay certification** | Done: 7/7 injected vacuities → VACUOUS (synthesis folding, induction k≤2, rIC3); 3/3 real triggers reachable; 17/17 FIFO CEXs confirmed by btorsim **and** Verilator replay on the original RTL+SVA; simulation finds 16- and 32-deep bugs in 3–90 ms where BMC and rIC3 timed out |
 | **M4** ✅ | Persistent session (`qfv serve`, JSON over stdio) with monitors emitted straight into the AIG (SV expression → AIG over a Yosys name map), MCP server (`qfv mcp`), JasperGold-subset setup files, Tcl package (`tcl/qfv.tcl`), `export_jaspergold` | Done: an agent completes the case-study loop only through MCP (14/14 checks), and Yosys runs once per session; direct emission matches the Yosys flow on 46/46 properties (CEX one frame shorter), and every session CEX replays on the M1 text monitor; per-assertion check 20–90 ms + budget. Transport is stdio, not a Unix socket; setup files use a Tcl-subset parser, not embedded libtcl |
 | **M5** ✅ | Portfolio (rIC3 per property on an AIGER dump; CEXs parsed into our traces, proofs checked by Certifaiger), LIDRUP certification of every UNSAT answer (`--certify`, lidrup-check against our own query log), container | Done: time to first CEX at or below rIC3 in every benchmark case (<10 ms vs 0.06 s–timeout); certified PROVEN on clean FIFOs (0.9–1.0 s, vs rIC3 alone 0.33 s / 10 s / timeout); `--certify` verified on all PASS_BOUNDED results; all certificate checks shown to reject tampered inputs. ABC and Pono not integrated (rIC3 covers IC3/BMC/k-induction); Dockerfile written but **not built** (no Docker on the dev machine) |
-| **M6** | Case-study report (§10) | Metrics published; the handoff Tcl is ready to try on JasperGold at work |
+| **M6** ✅ | Case-study report | Done (`casestudy/m6_report/README.md`): 70/79 FVEval expert assertions in the v1 subset (all 9 rejections are liveness); hot path p50 0.53 ms; 98% of Design2SVA assertions settled without JasperGold; 24/27 mutants killed (survivors: 2 equivalent, 1 needs liveness/covers); 88/88 CEXs and 119/119 PROVEN certified; 0 wrong verdicts. Found and fixed a soundness bug (BTOR2 states without `next`) and re-established all results; found several benchmark issues (53% of FSMs infer latches, too-strong and contradictory references) |
 | **v2** | k-induction (`PROVEN`) with Certifaiger, simulation-seeded BMC, SVA v1.1 constructs, liveness via liveness-to-safety, Lean-verified unroller, word-level solving (Bitwuzla) | — |
 
 ## 12. Tech stack and packaging

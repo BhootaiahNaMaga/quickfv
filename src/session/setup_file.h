@@ -28,6 +28,7 @@ struct SetupConfig {
     std::vector<std::string> paramOverrides; // NAME=VALUE
     std::string clock;
     std::string resetExpr;
+    int resetCycles = 1; // `reset -cycles N` (QuickFV extension)
     std::vector<SetupProperty> properties;
     double timeLimitSeconds = 600;
     bool prove = false;

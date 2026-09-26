@@ -15,6 +15,10 @@ struct TransitionSystem {
         std::string name;
         int64_t btorId = 0;
         std::vector<Lit> bits; // LSB first; AIG inputs
+        bool synthetic = false; // an X turned into a free value, not a design input
+        /// >= 0: the free next value of this latch (a BTOR2 state without `next`
+        /// is unconstrained in every frame after the first). Not a BTOR2 input.
+        int32_t freeNextOf = -1;
     };
     struct Latch {
         std::string name;
@@ -23,6 +27,7 @@ struct TransitionSystem {
         std::vector<Lit> next;     // next-state function over inputs and `cur`
         std::vector<int8_t> init;  // per bit: 0, 1, or -1 (unconstrained)
         bool synthetic = false;    // introduced by Yosys or a qfv monitor, not RTL state
+        std::vector<std::string> aliases; // every name Yosys gave this register (session models)
     };
     struct Property {
         /// Assert: `bad` true = violation. Reach: `bad` true = the goal was

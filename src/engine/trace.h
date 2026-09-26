@@ -36,6 +36,11 @@ struct ReplayOptions {
 /// inputs cycle by cycle, and lets the simulator's own SVA checking decide.
 std::string replayTestbench(const TransitionSystem& ts, const Cex& cex, const ReplayOptions& opts);
 
+/// True if the trace needs particular values of X (synthetic free inputs): the
+/// property is no longer violated at the trace's end when every X is 0. Such a
+/// CEX is real under formal X semantics but not in a 2-state simulation.
+bool xDependent(const TransitionSystem& ts, size_t prop, const Cex& cex);
+
 /// True if a latch name refers to real RTL state that exists in the original
 /// sources (not Yosys-internal, a qfv monitor, or the qfv reset environment).
 bool isRtlLatch(const TransitionSystem::Latch& l);

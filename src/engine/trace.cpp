@@ -1,5 +1,6 @@
 #include "engine/trace.h"
 
+#include <algorithm>
 #include <map>
 
 #include "engine/sim.h"
@@ -28,24 +29,57 @@ std::vector<std::vector<std::vector<int8_t>>> latchValues(const TransitionSystem
 
 } // namespace
 
+bool xDependent(const TransitionSystem& ts, size_t prop, const Cex& cex) {
+    bool any = false;
+    for (auto& in : ts.inputs)
+        any = any || in.synthetic;
+    if (!any)
+        return false;
+    SimTrace t{cex.initLatches, cex.inputs};
+    for (auto& frame : t.inputs)
+        for (size_t i = 0; i < ts.inputs.size(); i++)
+            if (ts.inputs[i].synthetic)
+                std::fill(frame[i].begin(), frame[i].end(), 0);
+    bool held = true;
+    auto bads = simulate(ts, t, held);
+    if (bads.empty())
+        return true;
+    auto& last = bads.back();
+    return std::find(last.begin(), last.end(), prop) == last.end() || !held;
+}
+
 bool isRtlLatch(const TransitionSystem::Latch& l) {
     return !l.name.empty() && l.name.find('$') == std::string::npos &&
            l.name.find("qfv_") == std::string::npos;
 }
 
 std::string btor2Witness(const TransitionSystem& ts, size_t prop, const Cex& cex) {
-    std::string w = "sat\nb" + std::to_string(prop) + "\n#0\n";
-    for (size_t i = 0; i < ts.latches.size(); i++) {
-        bool hasInit = true;
-        for (auto b : ts.latches[i].init)
-            hasInit = hasInit && b >= 0;
-        if (!hasInit)
-            w += std::to_string(i) + " " + bitsText(cex.initLatches[i]) + "\n";
-    }
+    std::vector<int32_t> freeOfLatch(ts.latches.size(), -1);
+    for (size_t i = 0; i < ts.inputs.size(); i++)
+        if (ts.inputs[i].freeNextOf >= 0)
+            freeOfLatch[size_t(ts.inputs[i].freeNextOf)] = int32_t(i);
+    std::string w = "sat\nb" + std::to_string(prop) + "\n";
     for (size_t f = 0; f < cex.inputs.size(); f++) {
+        w += "#" + std::to_string(f) + "\n";
+        for (size_t i = 0; i < ts.latches.size(); i++) {
+            if (f == 0) {
+                bool hasInit = true;
+                for (auto b : ts.latches[i].init)
+                    hasInit = hasInit && b >= 0;
+                if (!hasInit)
+                    w += std::to_string(i) + " " + bitsText(cex.initLatches[i]) + "\n";
+            }
+            else if (freeOfLatch[i] >= 0) { // unconstrained state: its value in frame f
+                w += std::to_string(i) + " " + bitsText(cex.inputs[f - 1][size_t(freeOfLatch[i])]) + "\n";
+            }
+        }
         w += "@" + std::to_string(f) + "\n";
-        for (size_t i = 0; i < ts.inputs.size(); i++)
-            w += std::to_string(i) + " " + bitsText(cex.inputs[f][i]) + "\n";
+        size_t k = 0; // index among real BTOR2 inputs
+        for (size_t i = 0; i < ts.inputs.size(); i++) {
+            if (ts.inputs[i].freeNextOf >= 0)
+                continue;
+            w += std::to_string(k++) + " " + bitsText(cex.inputs[f][i]) + "\n";
+        }
     }
     return w + ".\n";
 }
@@ -64,7 +98,7 @@ std::string jsonTrace(const TransitionSystem& ts, size_t prop, const Cex& cex,
         w.beginObject().field("cycle", uint64_t(f));
         w.key("inputs").beginObject();
         for (size_t i = 0; i < ts.inputs.size(); i++)
-            if (!ts.inputs[i].name.empty() && ts.inputs[i].name != clock)
+            if (!ts.inputs[i].name.empty() && ts.inputs[i].name != clock && !ts.inputs[i].synthetic)
                 w.field(ts.inputs[i].name, bitsText(cex.inputs[f][i]));
         w.endObject();
         w.key("registers").beginObject();
@@ -150,7 +184,7 @@ std::string replayTestbench(const TransitionSystem& ts, const Cex& cex, const Re
                      "module qfv_replay;\n  reg " + o.clock + " = 0;\n";
     std::string ports = "." + o.clock + "(" + o.clock + ")";
     for (auto& in : ts.inputs) {
-        if (in.name.empty() || in.name == o.clock)
+        if (in.name.empty() || in.name == o.clock || in.synthetic)
             continue;
         tb += "  reg [" + std::to_string(in.bits.size() - 1) + ":0] " + in.name + " = 0;\n";
         ports += ", ." + in.name + "(" + in.name + ")";
@@ -173,7 +207,7 @@ std::string replayTestbench(const TransitionSystem& ts, const Cex& cex, const Re
         tb += "    qfv_cycle = " + std::to_string(f) + ";";
         for (size_t i = 0; i < ts.inputs.size(); i++) {
             auto& in = ts.inputs[i];
-            if (in.name.empty() || in.name == o.clock)
+            if (in.name.empty() || in.name == o.clock || in.synthetic)
                 continue;
             tb += " " + in.name + " = " + std::to_string(in.bits.size()) + "'b" +
                   bitsText(cex.inputs[f][i]) + ";";

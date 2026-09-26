@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 
 #include "model/ts.h"
@@ -85,7 +86,7 @@ public:
                 if (!name.empty())
                     ts.signals[name] = bits;
                 if (l->tag == BTOR2_TAG_input) {
-                    ts.inputs.push_back({name, l->id, bits});
+                    ts.inputs.push_back({name, l->id, bits, name.empty() || name.find('$') != std::string::npos});
                 }
                 else {
                     TransitionSystem::Latch latch;
@@ -116,6 +117,7 @@ public:
                         auto li = latchIndex.find(l->args[0]);
                         if (l->args[0] > 0 && li != latchIndex.end()) {
                             auto& latch = ts.latches[li->second];
+                            latch.aliases.push_back(l->symbol);
                             if (latch.name.empty() || latch.synthetic) {
                                 latch.name = l->symbol;
                                 latch.synthetic = latch.name.find('$') != std::string::npos ||
@@ -136,6 +138,7 @@ public:
                 }
                 case BTOR2_TAG_next:
                     ts.latches.at(latchIndex.at(l->args[0])).next = arg(l, 1);
+                    hasNext.insert(l->args[0]);
                     break;
                 case BTOR2_TAG_bad: {
                     TransitionSystem::Property prop;
@@ -164,6 +167,23 @@ public:
                     fail(l, "liveness (justice/fairness) is not supported in v1");
                 default: nodes[l->id] = blast(l);
             }
+        }
+        // BTOR2: a state without a next function is unconstrained in every frame
+        // (its init, if any, applies to frame 0 only), exactly like Yosys's
+        // $anyseq. Model it with a fresh free input as its next value.
+        for (auto& [id, index] : latchIndex) {
+            if (hasNext.count(id))
+                continue;
+            auto& latch = ts.latches[index];
+            TransitionSystem::Input in;
+            in.name = "$free_next$" + (latch.name.empty() ? std::to_string(id) : latch.name);
+            in.btorId = 0;
+            in.synthetic = true;
+            in.freeNextOf = int32_t(index);
+            for (size_t b = 0; b < latch.cur.size(); b++)
+                in.bits.push_back(aig.newInput());
+            latch.next = in.bits;
+            ts.inputs.push_back(in);
         }
     }
 
@@ -434,6 +454,7 @@ private:
     Aig& aig;
     std::map<int64_t, Bits> nodes;
     std::map<int64_t, size_t> latchIndex;
+    std::set<int64_t> hasNext;
 };
 
 } // namespace

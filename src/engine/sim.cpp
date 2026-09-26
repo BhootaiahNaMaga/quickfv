@@ -75,10 +75,24 @@ bool parseWitness(const std::string& path, const TransitionSystem& ts, SimTrace&
             bits[i] = s[s.size() - 1 - i] == '1' ? 1 : 0;
         return bits;
     };
+    std::vector<size_t> realInputs;          // BTOR2 input index -> ts input
+    std::vector<int32_t> freeOfLatch(ts.latches.size(), -1);
+    for (size_t i = 0; i < ts.inputs.size(); i++) {
+        if (ts.inputs[i].freeNextOf >= 0)
+            freeOfLatch[size_t(ts.inputs[i].freeNextOf)] = int32_t(i);
+        else
+            realInputs.push_back(i);
+    }
     trace.initLatches.assign(ts.latches.size(), {});
     for (size_t i = 0; i < ts.latches.size(); i++)
         trace.initLatches[i].assign(ts.latches[i].cur.size(), 0);
+    auto newFrame = [&] {
+        trace.inputs.emplace_back();
+        for (auto& inp : ts.inputs)
+            trace.inputs.back().emplace_back(inp.bits.size(), 0);
+    };
     std::string line;
+    int stateFrame = -1;
     bool inStates = false;
     while (std::getline(in, line)) {
         if (line.empty() || line == "sat" || line[0] == 'b' || line[0] == 'j')
@@ -87,13 +101,12 @@ bool parseWitness(const std::string& path, const TransitionSystem& ts, SimTrace&
             break;
         if (line[0] == '#') {
             inStates = true;
+            stateFrame = std::stoi(line.substr(1));
             continue;
         }
         if (line[0] == '@') {
             inStates = false;
-            trace.inputs.emplace_back();
-            for (auto& inp : ts.inputs)
-                trace.inputs.back().emplace_back(inp.bits.size(), 0);
+            newFrame();
             continue;
         }
         std::istringstream ls(line);
@@ -101,11 +114,16 @@ bool parseWitness(const std::string& path, const TransitionSystem& ts, SimTrace&
         std::string value;
         ls >> idx >> value;
         if (inStates) {
-            if (idx < ts.latches.size())
+            if (idx >= ts.latches.size())
+                continue;
+            if (stateFrame == 0)
                 trace.initLatches[idx] = toBits(value, ts.latches[idx].cur.size());
+            else if (freeOfLatch[idx] >= 0 && stateFrame >= 1 && size_t(stateFrame - 1) < trace.inputs.size())
+                trace.inputs[size_t(stateFrame - 1)][size_t(freeOfLatch[idx])] =
+                    toBits(value, ts.latches[idx].cur.size());
         }
-        else if (!trace.inputs.empty() && idx < ts.inputs.size()) {
-            trace.inputs.back()[idx] = toBits(value, ts.inputs[idx].bits.size());
+        else if (!trace.inputs.empty() && idx < realInputs.size()) {
+            trace.inputs.back()[realInputs[idx]] = toBits(value, ts.inputs[realInputs[idx]].bits.size());
         }
     }
     return true;

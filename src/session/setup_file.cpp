@@ -221,15 +221,15 @@ bool parseSetupText(const std::string& text, const std::string& baseDir, const s
             }
             else if (cmd == "reset") {
                 need(2);
-                if (w[1] == "-expression") {
-                    need(3);
-                    cfg.resetExpr = w[2];
-                }
-                else if (w[1][0] == '-') {
-                    throw ParseError{line, "reset: unsupported option " + w[1]};
-                }
-                else {
-                    cfg.resetExpr = w[1];
+                for (size_t k = 1; k < w.size(); k++) {
+                    if (w[k] == "-expression" && k + 1 < w.size())
+                        cfg.resetExpr = w[++k];
+                    else if (w[k] == "-cycles" && k + 1 < w.size()) // QuickFV extension
+                        cfg.resetCycles = std::stoi(w[++k]);
+                    else if (w[k][0] == '-')
+                        throw ParseError{line, "reset: unsupported option " + w[k]};
+                    else
+                        cfg.resetExpr = w[k];
                 }
             }
             else if (cmd == "assert" || cmd == "assume" || cmd == "cover") {

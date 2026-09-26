@@ -61,6 +61,7 @@ add_library(qfv_core
   src/model/btor2_write.cpp
   src/session/design_session.cpp
   src/session/setup_file.cpp
+  src/session/reset_env.cpp
   src/model/aig.cpp
   src/model/btor2_load.cpp
   src/engine/unroll.cpp

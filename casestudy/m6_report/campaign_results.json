@@ -1,0 +1,725 @@
+{
+ "fifo_1r1w": [
+  {
+   "variant": "clean",
+   "load_ms": 34,
+   "check_ms": 723,
+   "verdicts": {
+    "fifo_0": "PROVEN",
+    "fifo_1": "PROVEN",
+    "fifo_2": "PROVEN"
+   },
+   "killed_by": [],
+   "first_cex_ms": -1,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 0,
+   "n_proven": 3,
+   "rtl_replay": "-",
+   "wall_s": 0.8
+  },
+  {
+   "variant": "bug:OVERFLOW",
+   "load_ms": 28,
+   "check_ms": 196,
+   "verdicts": {
+    "fifo_0": "CEX",
+    "fifo_1": "CEX",
+    "fifo_2": "CEX"
+   },
+   "killed_by": [
+    "fifo_0",
+    "fifo_1",
+    "fifo_2"
+   ],
+   "first_cex_ms": 0.0,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 6,
+   "n_proven": 0,
+   "rtl_replay": "confirmed",
+   "wall_s": 3.5
+  },
+  {
+   "variant": "bug:UNDERFLOW",
+   "load_ms": 51,
+   "check_ms": 584,
+   "verdicts": {
+    "fifo_0": "CEX",
+    "fifo_1": "PROVEN",
+    "fifo_2": "CEX"
+   },
+   "killed_by": [
+    "fifo_0",
+    "fifo_2"
+   ],
+   "first_cex_ms": 0.0,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 2,
+   "n_proven": 1,
+   "rtl_replay": "confirmed",
+   "wall_s": 4.0
+  },
+  {
+   "variant": "bug:DATA",
+   "load_ms": 47,
+   "check_ms": 595,
+   "verdicts": {
+    "fifo_0": "PROVEN",
+    "fifo_1": "PROVEN",
+    "fifo_2": "CEX"
+   },
+   "killed_by": [
+    "fifo_2"
+   ],
+   "first_cex_ms": 0.0,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 2,
+   "n_proven": 2,
+   "rtl_replay": "confirmed",
+   "wall_s": 4.0
+  },
+  {
+   "variant": "bug:DEEP",
+   "load_ms": 53,
+   "check_ms": 298,
+   "verdicts": {
+    "fifo_0": "CEX",
+    "fifo_1": "CEX",
+    "fifo_2": "CEX"
+   },
+   "killed_by": [
+    "fifo_0",
+    "fifo_1",
+    "fifo_2"
+   ],
+   "first_cex_ms": 0.1,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 6,
+   "n_proven": 0,
+   "rtl_replay": "confirmed",
+   "wall_s": 3.7
+  },
+  {
+   "variant": "auto:L25:!=->==",
+   "load_ms": 48,
+   "check_ms": 636,
+   "verdicts": {
+    "fifo_0": "PROVEN",
+    "fifo_1": "PROVEN",
+    "fifo_2": "PROVEN"
+   },
+   "killed_by": [],
+   "first_cex_ms": -1,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 0,
+   "n_proven": 3,
+   "rtl_replay": "-",
+   "wall_s": 0.7
+  },
+  {
+   "variant": "auto:L31:!=->==",
+   "load_ms": 28,
+   "check_ms": 39,
+   "verdicts": {
+    "fifo_0": "CEX",
+    "fifo_1": "CEX",
+    "fifo_2": "CEX"
+   },
+   "killed_by": [
+    "fifo_0",
+    "fifo_1",
+    "fifo_2"
+   ],
+   "first_cex_ms": 0.0,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 3,
+   "n_proven": 0,
+   "rtl_replay": "confirmed",
+   "wall_s": 3.4
+  },
+  {
+   "variant": "auto:L36:&&->||",
+   "load_ms": 52,
+   "check_ms": 49,
+   "verdicts": {
+    "fifo_0": "CEX",
+    "fifo_1": "CEX",
+    "fifo_2": "CEX"
+   },
+   "killed_by": [
+    "fifo_0",
+    "fifo_1",
+    "fifo_2"
+   ],
+   "first_cex_ms": 0.0,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 3,
+   "n_proven": 0,
+   "rtl_replay": "confirmed",
+   "wall_s": 3.5
+  },
+  {
+   "variant": "auto:L37:&&->||",
+   "load_ms": 53,
+   "check_ms": 68,
+   "verdicts": {
+    "fifo_0": "CEX",
+    "fifo_1": "CEX",
+    "fifo_2": "CEX"
+   },
+   "killed_by": [
+    "fifo_0",
+    "fifo_1",
+    "fifo_2"
+   ],
+   "first_cex_ms": 0.0,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 4,
+   "n_proven": 0,
+   "rtl_replay": "confirmed",
+   "wall_s": 3.5
+  },
+  {
+   "variant": "auto:L40:!->drop",
+   "load_ms": 56,
+   "check_ms": 41,
+   "verdicts": {
+    "fifo_0": "CEX",
+    "fifo_1": "CEX",
+    "fifo_2": "CEX"
+   },
+   "killed_by": [
+    "fifo_0",
+    "fifo_1",
+    "fifo_2"
+   ],
+   "first_cex_ms": 0.0,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 3,
+   "n_proven": 0,
+   "rtl_replay": "confirmed",
+   "wall_s": 3.5
+  },
+  {
+   "variant": "auto:L47:+ 1'b1->+ 1'b0",
+   "load_ms": 53,
+   "check_ms": 599,
+   "verdicts": {
+    "fifo_0": "PROVEN",
+    "fifo_1": "PROVEN",
+    "fifo_2": "CEX"
+   },
+   "killed_by": [
+    "fifo_2"
+   ],
+   "first_cex_ms": 0.0,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 1,
+   "n_proven": 2,
+   "rtl_replay": "confirmed",
+   "wall_s": 4.0
+  },
+  {
+   "variant": "auto:L53:+ 1'b1->+ 1'b0",
+   "load_ms": 46,
+   "check_ms": 655,
+   "verdicts": {
+    "fifo_0": "PROVEN",
+    "fifo_1": "PROVEN",
+    "fifo_2": "CEX"
+   },
+   "killed_by": [
+    "fifo_2"
+   ],
+   "first_cex_ms": 0.0,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 2,
+   "n_proven": 2,
+   "rtl_replay": "confirmed",
+   "wall_s": 4.1
+  },
+  {
+   "variant": "auto:L61:- pop->+ pop",
+   "load_ms": 51,
+   "check_ms": 44,
+   "verdicts": {
+    "fifo_0": "CEX",
+    "fifo_1": "CEX",
+    "fifo_2": "CEX"
+   },
+   "killed_by": [
+    "fifo_0",
+    "fifo_1",
+    "fifo_2"
+   ],
+   "first_cex_ms": 0.0,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 3,
+   "n_proven": 0,
+   "rtl_replay": "confirmed",
+   "wall_s": 3.5
+  }
+ ],
+ "arbiter_rr": [
+  {
+   "variant": "clean",
+   "load_ms": 61,
+   "check_ms": 1565,
+   "verdicts": {
+    "arbiter_0": "PROVEN",
+    "arbiter_10": "PROVEN",
+    "arbiter_11": "PROVEN",
+    "arbiter_3": "PROVEN",
+    "arbiter_4": "PROVEN",
+    "arbiter_5": "PROVEN",
+    "arbiter_6": "PROVEN",
+    "arbiter_7": "PROVEN",
+    "arbiter_8": "PROVEN",
+    "arbiter_9": "PROVEN"
+   },
+   "killed_by": [],
+   "first_cex_ms": -1,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 0,
+   "n_proven": 10,
+   "rtl_replay": "-",
+   "wall_s": 1.6
+  },
+  {
+   "variant": "bug:BUSY",
+   "load_ms": 40,
+   "check_ms": 1277,
+   "verdicts": {
+    "arbiter_0": "PROVEN",
+    "arbiter_10": "PROVEN",
+    "arbiter_11": "PROVEN",
+    "arbiter_3": "PROVEN",
+    "arbiter_4": "PROVEN",
+    "arbiter_5": "CEX",
+    "arbiter_6": "PROVEN",
+    "arbiter_7": "CEX",
+    "arbiter_8": "PROVEN",
+    "arbiter_9": "PROVEN"
+   },
+   "killed_by": [
+    "arbiter_5",
+    "arbiter_7"
+   ],
+   "first_cex_ms": 0.1,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 2,
+   "n_proven": 8,
+   "rtl_replay": "confirmed",
+   "wall_s": 4.7
+  },
+  {
+   "variant": "bug:RR",
+   "load_ms": 61,
+   "check_ms": 1690,
+   "verdicts": {
+    "arbiter_0": "PROVEN",
+    "arbiter_10": "PROVEN",
+    "arbiter_11": "PROVEN",
+    "arbiter_3": "PROVEN",
+    "arbiter_4": "CEX",
+    "arbiter_5": "PROVEN",
+    "arbiter_6": "PROVEN",
+    "arbiter_7": "CEX",
+    "arbiter_8": "CEX",
+    "arbiter_9": "PROVEN"
+   },
+   "killed_by": [
+    "arbiter_4",
+    "arbiter_7",
+    "arbiter_8"
+   ],
+   "first_cex_ms": 0.3,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 4,
+   "n_proven": 7,
+   "rtl_replay": "confirmed",
+   "wall_s": 5.2
+  },
+  {
+   "variant": "bug:ID",
+   "load_ms": 56,
+   "check_ms": 1472,
+   "verdicts": {
+    "arbiter_0": "PROVEN",
+    "arbiter_10": "CEX",
+    "arbiter_11": "PROVEN",
+    "arbiter_3": "PROVEN",
+    "arbiter_4": "PROVEN",
+    "arbiter_5": "PROVEN",
+    "arbiter_6": "PROVEN",
+    "arbiter_7": "PROVEN",
+    "arbiter_8": "PROVEN",
+    "arbiter_9": "PROVEN"
+   },
+   "killed_by": [
+    "arbiter_10"
+   ],
+   "first_cex_ms": 0.2,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 1,
+   "n_proven": 9,
+   "rtl_replay": "confirmed",
+   "wall_s": 5.0
+  },
+  {
+   "variant": "bug:LAST",
+   "load_ms": 55,
+   "check_ms": 1205,
+   "verdicts": {
+    "arbiter_0": "PROVEN",
+    "arbiter_10": "PROVEN",
+    "arbiter_11": "PROVEN",
+    "arbiter_3": "PROVEN",
+    "arbiter_4": "PROVEN",
+    "arbiter_5": "PROVEN",
+    "arbiter_6": "CEX",
+    "arbiter_7": "CEX",
+    "arbiter_8": "PROVEN",
+    "arbiter_9": "PROVEN"
+   },
+   "killed_by": [
+    "arbiter_6",
+    "arbiter_7"
+   ],
+   "first_cex_ms": 0.2,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 2,
+   "n_proven": 8,
+   "rtl_replay": "confirmed",
+   "wall_s": 4.7
+  },
+  {
+   "variant": "auto:L23: < -> <= ",
+   "load_ms": 56,
+   "check_ms": 1253,
+   "verdicts": {
+    "arbiter_0": "PROVEN",
+    "arbiter_10": "PROVEN",
+    "arbiter_11": "PROVEN",
+    "arbiter_3": "PROVEN",
+    "arbiter_4": "PROVEN",
+    "arbiter_5": "PROVEN",
+    "arbiter_6": "PROVEN",
+    "arbiter_7": "CEX",
+    "arbiter_8": "CEX",
+    "arbiter_9": "PROVEN"
+   },
+   "killed_by": [
+    "arbiter_7",
+    "arbiter_8"
+   ],
+   "first_cex_ms": 0.1,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 2,
+   "n_proven": 8,
+   "rtl_replay": "NOT-REPRODUCED (x-dependent)",
+   "wall_s": 4.7
+  },
+  {
+   "variant": "auto:L31:&&->||",
+   "load_ms": 52,
+   "check_ms": 1299,
+   "verdicts": {
+    "arbiter_0": "PROVEN",
+    "arbiter_10": "PROVEN",
+    "arbiter_11": "PROVEN",
+    "arbiter_3": "PROVEN",
+    "arbiter_4": "CEX",
+    "arbiter_5": "PROVEN",
+    "arbiter_6": "PROVEN",
+    "arbiter_7": "CEX",
+    "arbiter_8": "PROVEN",
+    "arbiter_9": "PROVEN"
+   },
+   "killed_by": [
+    "arbiter_4",
+    "arbiter_7"
+   ],
+   "first_cex_ms": 0.2,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 2,
+   "n_proven": 8,
+   "rtl_replay": "confirmed",
+   "wall_s": 4.8
+  },
+  {
+   "variant": "auto:L35:&&->||",
+   "load_ms": 53,
+   "check_ms": 1095,
+   "verdicts": {
+    "arbiter_0": "CEX",
+    "arbiter_10": "PROVEN",
+    "arbiter_11": "PROVEN",
+    "arbiter_3": "PROVEN",
+    "arbiter_4": "CEX",
+    "arbiter_5": "PROVEN",
+    "arbiter_6": "PROVEN",
+    "arbiter_7": "CEX",
+    "arbiter_8": "CEX",
+    "arbiter_9": "PROVEN"
+   },
+   "killed_by": [
+    "arbiter_0",
+    "arbiter_4",
+    "arbiter_7",
+    "arbiter_8"
+   ],
+   "first_cex_ms": 0.1,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 5,
+   "n_proven": 6,
+   "rtl_replay": "confirmed",
+   "wall_s": 4.7
+  },
+  {
+   "variant": "auto:L45: < -> <= ",
+   "load_ms": 55,
+   "check_ms": 1338,
+   "verdicts": {
+    "arbiter_0": "PROVEN",
+    "arbiter_10": "CEX",
+    "arbiter_11": "CEX",
+    "arbiter_3": "PROVEN",
+    "arbiter_4": "PROVEN",
+    "arbiter_5": "PROVEN",
+    "arbiter_6": "PROVEN",
+    "arbiter_7": "PROVEN",
+    "arbiter_8": "PROVEN",
+    "arbiter_9": "PROVEN"
+   },
+   "killed_by": [
+    "arbiter_10",
+    "arbiter_11"
+   ],
+   "first_cex_ms": 0.1,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 2,
+   "n_proven": 8,
+   "rtl_replay": "NOT-REPRODUCED (x-dependent)",
+   "wall_s": 4.9
+  },
+  {
+   "variant": "auto:L54:!->drop",
+   "load_ms": 53,
+   "check_ms": 1168,
+   "verdicts": {
+    "arbiter_0": "PROVEN",
+    "arbiter_10": "PROVEN",
+    "arbiter_11": "PROVEN",
+    "arbiter_3": "PROVEN",
+    "arbiter_4": "PROVEN",
+    "arbiter_5": "PROVEN",
+    "arbiter_6": "CEX",
+    "arbiter_7": "CEX",
+    "arbiter_8": "CEX",
+    "arbiter_9": "PROVEN"
+   },
+   "killed_by": [
+    "arbiter_6",
+    "arbiter_7",
+    "arbiter_8"
+   ],
+   "first_cex_ms": 0.1,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 3,
+   "n_proven": 7,
+   "rtl_replay": "confirmed",
+   "wall_s": 4.7
+  }
+ ],
+ "counter": [
+  {
+   "variant": "clean",
+   "load_ms": 26,
+   "check_ms": 1050,
+   "verdicts": {
+    "counter_0": "CEX",
+    "counter_0_refined": "PROVEN",
+    "counter_1": "CEX",
+    "counter_1_refined": "PROVEN",
+    "counter_2": "PROVEN",
+    "counter_3": "PROVEN",
+    "counter_4": "PROVEN"
+   },
+   "killed_by": [],
+   "first_cex_ms": -1,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 3,
+   "n_proven": 5,
+   "rtl_replay": "-",
+   "wall_s": 1.1
+  },
+  {
+   "variant": "bug:WRAP",
+   "load_ms": 26,
+   "check_ms": 1103,
+   "verdicts": {
+    "counter_0": "CEX",
+    "counter_0_refined": "CEX",
+    "counter_1": "CEX",
+    "counter_1_refined": "PROVEN",
+    "counter_2": "PROVEN",
+    "counter_3": "PROVEN",
+    "counter_4": "PROVEN"
+   },
+   "killed_by": [
+    "counter_0_refined"
+   ],
+   "first_cex_ms": 27.4,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 4,
+   "n_proven": 4,
+   "rtl_replay": "confirmed",
+   "wall_s": 6.7
+  },
+  {
+   "variant": "bug:FLOOR",
+   "load_ms": 26,
+   "check_ms": 1268,
+   "verdicts": {
+    "counter_0": "CEX",
+    "counter_0_refined": "PROVEN",
+    "counter_1": "CEX",
+    "counter_1_refined": "CEX",
+    "counter_2": "CEX",
+    "counter_3": "PROVEN",
+    "counter_4": "PROVEN"
+   },
+   "killed_by": [
+    "counter_1_refined",
+    "counter_2"
+   ],
+   "first_cex_ms": 28.6,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 7,
+   "n_proven": 3,
+   "rtl_replay": "confirmed",
+   "wall_s": 12.6
+  },
+  {
+   "variant": "bug:IDLE",
+   "load_ms": 394,
+   "check_ms": 2109,
+   "verdicts": {
+    "counter_0": "CEX",
+    "counter_0_refined": "PROVEN",
+    "counter_1": "CEX",
+    "counter_1_refined": "PROVEN",
+    "counter_2": "PROVEN",
+    "counter_3": "PROVEN",
+    "counter_4": "CEX"
+   },
+   "killed_by": [
+    "counter_4"
+   ],
+   "first_cex_ms": 906.2,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 4,
+   "n_proven": 4,
+   "rtl_replay": "confirmed",
+   "wall_s": 14.5
+  },
+  {
+   "variant": "auto:L15:!->drop",
+   "load_ms": 42,
+   "check_ms": 773,
+   "verdicts": {
+    "counter_0": "CEX",
+    "counter_0_refined": "CEX",
+    "counter_1": "CEX",
+    "counter_1_refined": "PROVEN",
+    "counter_2": "CEX",
+    "counter_3": "CEX",
+    "counter_4": "CEX"
+   },
+   "killed_by": [
+    "counter_0_refined",
+    "counter_2",
+    "counter_3",
+    "counter_4"
+   ],
+   "first_cex_ms": 28.3,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 6,
+   "n_proven": 1,
+   "rtl_replay": "confirmed",
+   "wall_s": 4.4
+  },
+  {
+   "variant": "auto:L20: > -> >= ",
+   "load_ms": 47,
+   "check_ms": 800,
+   "verdicts": {
+    "counter_0": "CEX",
+    "counter_0_refined": "PROVEN",
+    "counter_1": "CEX",
+    "counter_1_refined": "PROVEN",
+    "counter_2": "PROVEN",
+    "counter_3": "PROVEN",
+    "counter_4": "PROVEN"
+   },
+   "killed_by": [],
+   "first_cex_ms": -1,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 3,
+   "n_proven": 5,
+   "rtl_replay": "-",
+   "wall_s": 0.9
+  },
+  {
+   "variant": "auto:L25: < -> <= ",
+   "load_ms": 26,
+   "check_ms": 853,
+   "verdicts": {
+    "counter_0": "CEX",
+    "counter_0_refined": "PROVEN",
+    "counter_1": "CEX",
+    "counter_1_refined": "PROVEN",
+    "counter_2": "PROVEN",
+    "counter_3": "PROVEN",
+    "counter_4": "PROVEN"
+   },
+   "killed_by": [],
+   "first_cex_ms": -1,
+   "cex_certified": true,
+   "proven_certified": true,
+   "n_cex": 3,
+   "n_proven": 5,
+   "rtl_replay": "-",
+   "wall_s": 0.9
+  }
+ ]
+}
