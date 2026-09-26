@@ -49,13 +49,13 @@ public:
 
         std::string anteMatch = emitAntecedent();
         if (ir.kind == DirectiveKind::Cover) {
-            directive("cover", anteMatch);
+            reach(anteMatch, "qfv_cover__" + ir.label, ir.label);
         }
         else {
             std::string fail = emitConsequent(anteMatch);
             directive(ir.kind == DirectiveKind::Assert ? "assert" : "assume", "!" + fail);
-            if (opts.vacuityCover && !ir.ante.elems.empty())
-                directive("cover", anteMatch, ir.label + "_qfv_trigger");
+            if (opts.vacuityCover && ir.kind == DirectiveKind::Assert && !ir.ante.elems.empty())
+                reach(anteMatch, "qfv_trigger__" + ir.label, ir.label + "_qfv_trigger");
         }
         emitRegisters();
         return out.str();
@@ -210,6 +210,14 @@ private:
             label = ir.label;
         out << label << ": " << kind << " property (@(" << ir.clockEvent << ") disable iff ("
             << p << "_dis) " << expr << ");\n";
+    }
+
+    /// A reachability goal: a real cover, or (for the engine) a negated assert.
+    void reach(const std::string& goal, const std::string& badLabel, const std::string& coverLabel) {
+        if (opts.reachAsBad)
+            directive("assert", "!" + goal, badLabel);
+        else
+            directive("cover", goal, coverLabel);
     }
 
     void emitRegisters() {

@@ -54,7 +54,11 @@ add_library(qfv_core
   src/sva/monitor.cpp
   src/model/aig.cpp
   src/model/btor2_load.cpp
-  src/engine/bmc.cpp
+  src/engine/unroll.cpp
+  src/engine/external.cpp
+  src/engine/hunt.cpp
+  src/engine/randsim.cpp
+  src/engine/trace.cpp
   src/engine/sim.cpp)
 target_include_directories(qfv_core PUBLIC src)
 target_link_libraries(qfv_core PUBLIC slang::slang cadical btor2parser)

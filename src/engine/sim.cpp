@@ -5,8 +5,9 @@
 
 namespace qfv {
 
-std::vector<std::vector<size_t>> simulate(const TransitionSystem& ts, const SimTrace& trace,
-                                          bool& constraintsHeld) {
+std::vector<std::vector<size_t>> simulate(
+    const TransitionSystem& ts, const SimTrace& trace, bool& constraintsHeld,
+    std::vector<std::vector<std::vector<int8_t>>>* latchValues) {
     const auto& aig = ts.aig;
     std::vector<uint8_t> val(aig.numVars(), 0);
     auto get = [&](Lit l) -> uint8_t { return val[varOf(l)] ^ uint8_t(isNeg(l)); };
@@ -24,6 +25,16 @@ std::vector<std::vector<size_t>> simulate(const TransitionSystem& ts, const SimT
     constraintsHeld = true;
     std::vector<std::vector<size_t>> badsPerFrame;
     for (size_t f = 0; f < trace.inputs.size(); f++) {
+        if (latchValues) {
+            std::vector<std::vector<int8_t>> frame;
+            for (auto& latch : ts.latches) {
+                std::vector<int8_t> bits;
+                for (Lit l : latch.cur)
+                    bits.push_back(int8_t(get(l)));
+                frame.push_back(bits);
+            }
+            latchValues->push_back(frame);
+        }
         for (size_t i = 0; i < ts.inputs.size(); i++)
             for (size_t b = 0; b < ts.inputs[i].bits.size(); b++)
                 val[varOf(ts.inputs[i].bits[b])] = bit(trace.inputs[f][i][b]);

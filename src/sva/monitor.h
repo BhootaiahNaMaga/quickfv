@@ -14,8 +14,12 @@
 namespace qfv::sva {
 
 struct MonitorOptions {
-    /// Also emit `cover property` on the antecedent match (vacuity check, T1).
+    /// Also emit a reachability goal for the antecedent match (vacuity check, T1).
     bool vacuityCover = false;
+    /// Emit covers and vacuity goals as `assert property (!goal)` labelled
+    /// `qfv_cover__<label>` / `qfv_trigger__<label>`, so that they become BTOR2
+    /// `bad` properties the engine treats as reachability goals.
+    bool reachAsBad = false;
 };
 
 std::string emitMonitor(const AssertionIR& ir, const MonitorOptions& opts = {});

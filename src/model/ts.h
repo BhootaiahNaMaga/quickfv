@@ -24,9 +24,15 @@ struct TransitionSystem {
         bool synthetic = false;    // introduced by Yosys or a qfv monitor, not RTL state
     };
     struct Property {
-        std::string name;
+        /// Assert: `bad` true = violation. Reach: `bad` true = the goal was
+        /// reached (a vacuity trigger or a cover), which is the good outcome.
+        enum class Kind { Assert, Reach };
+        std::string name;   // BTOR2 symbol, e.g. "fifo_tb_inst.qfv_trigger__fifo_0"
+        std::string label;  // user-facing: assertion label (instance path stripped)
+        Kind kind = Kind::Assert;
+        bool isTrigger = false; // Reach goal = antecedent of assertion `label` fires
         int64_t btorId = 0;
-        Lit bad = kFalse; // true in a frame = property violated in that frame
+        Lit bad = kFalse;
     };
 
     Aig aig;

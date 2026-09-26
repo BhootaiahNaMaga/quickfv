@@ -1,6 +1,6 @@
 # QuickFV — Agent-First Formal Pre-Check Engine
 
-**Status:** Draft v0.4 · 2026-09-25 (M0–M2 done; see `casestudy/m0_fifo/README.md`, `tests/sva_equiv/README.md`, `casestudy/m2_engine/README.md`)
+**Status:** Draft v0.5 · 2026-09-25 (M0–M3 done; see `casestudy/m0_fifo/README.md`, `tests/sva_equiv/README.md`, `casestudy/m2_engine/README.md`, `casestudy/m3_vacuity/README.md`)
 **Working name:** `qfv` (CLI / daemon: `qfvd`)
 
 ---
@@ -66,7 +66,7 @@ early failure.
 | Tier | Check | Target latency | Failure verdicts |
 |---|---|---|---|
 | **T0 Lint** | Parse and type-check the SVA against the *loaded* design: unknown signals, width mismatches, clocking, unsupported constructs | < 100 ms | `SYNTAX_ERROR`, `TYPE_ERROR`, `UNSUPPORTED` |
-| **T1 Sanity** | The trigger (antecedent) is reachable, via a cover with a witness trace; the property is not trivially true or false | < 1 s typical (keeps running into T2 if not yet found) | `VACUOUS`, `TRIVIALLY_TRUE`, `TRIVIALLY_FALSE` |
+| **T1 Sanity** | The trigger (antecedent) is reachable, via a goal with a witness trace, or proven unreachable (synthesis folding, k-induction, rIC3 IC3); the property is not constant-folded away | < 1 ms for constant/local vacuity; ~0.3 s for invariant-based (M3) | `VACUOUS`, `POSSIBLY_VACUOUS`, `TRIVIALLY_TRUE` |
 | **T2 Hunt** | Incremental BMC (depth grows until the time runs out) plus random simulation, raced from t=0 against IC3 engines (rIC3, ABC `pdr`), which often prove small designs in under 1 s (M0) | ≤ budget (default 600 s) | `CEX` (or early `PROVEN`) |
 | **T3 Handoff** | Generate JasperGold Tcl for the survivors | — | — |
 
@@ -295,7 +295,7 @@ Each milestone ends with a check against the oracles before the next one starts.
 | **M0** ✅ | OSS CAD Suite (Yosys, slang, SymbiYosys, ABC, rIC3, Pono, Verilator) + EBMC 6.0 built from source. FVEval `fifo_1r1w` model on a hand-written DUT with 4 injected bugs, through 5 engines, with CEX replay (`casestudy/m0_fifo`) | Done: 0 disagreements; 16/16 CEXs replay-confirmed on the original RTL; walkthrough in `casestudy/m0_fifo/README.md`. Linux container deferred to M5 |
 | **M1** ✅ | Session skeleton plus **SVA compiler** (slang → NFA → monitor, emitted as Verilog for inspection) plus **T0 lint** | Done: `qfv lint`/`compile-sva`/`check-sva`. 68/71 equivalence cases pass and 0 fail, against three oracles (EBMC, Verilator, hand-derived golden tests), because EBMC and Verilator each deviate from IEEE 1800 on `disable iff` and ranged sequences (`tests/sva_equiv/README.md`). T0 check of a new assertion: 0.2–3 ms. Compiled FIFO monitors reproduce the M0 results exactly |
 | **M2** ✅ | Model IR (AIG), BTOR2 loading, bit-blaster, incremental BMC (`qfv bmc`) | Done: shortest CEX = rIC3 BMC on all FIFO bugs; 9/9 CEXs certified by btorsim; bit-blaster matches btorsim on 261/261 operator×width cases; shallow bugs in ms of solver time (rIC3: 30–140 ms per process run). *Moved to M4: "adding an assertion never reloads the design"* (needs direct monitor→AIG emission plus the session daemon) |
-| **M3** | **T1** reachability, random simulator, CEX outputs (VCD/JSON/testbench), **RTL replay certification** | 100% of CEXs replay on the RTL; `VACUOUS` detected on every vacuity injection |
+| **M3** ✅ | **T1** vacuity (trigger goals; k-induction + rIC3 IC3 for proofs), bit-parallel random simulator, CEX outputs (JSON/VCD/BTOR2 witness/SV testbench), **RTL replay certification** | Done: 7/7 injected vacuities → VACUOUS (synthesis folding, induction k≤2, rIC3); 3/3 real triggers reachable; 17/17 FIFO CEXs confirmed by btorsim **and** Verilator replay on the original RTL+SVA; simulation finds 16- and 32-deep bugs in 3–90 ms where BMC and rIC3 timed out |
 | **M4** | JSON CLI with streaming, Tcl setup interpreter, Tcl package, MCP server, `export-jg`; **persistent session**: monitors emitted straight into the AIG (SV expression → AIG over a Yosys name map), so adding or editing an assertion never reruns Yosys | An agent completes the case-study loop only through MCP; re-checking an edited assertion needs no Yosys run |
 | **M5** | Portfolio (rIC3/ABC/Pono), LIDRUP/LRAT certification, container build | Time to first CEX at or below the oracles; `--certify` passes on all PASS_BOUNDED results |
 | **M6** | Case-study report (§10) | Metrics published; the handoff Tcl is ready to try on JasperGold at work |
@@ -317,7 +317,9 @@ Each milestone ends with a check against the oracles before the next one starts.
 | Stripping concurrent SVA before Yosys while keeping `bind` and in-module assertion scope | slang produces the design text minus SVA plus a scope map; tested in M1 |
 | 2-state vs JasperGold 4-state/X semantics give different verdicts | Documented; each result is flagged; `$isunknown` handled conservatively; validated at work via `export-jg` |
 | Memories bit-blast too large | M2 maps memories to registers (`memory_map`) and rejects BTOR2 arrays; lazy array encoding in v1.1; size limits reported |
-| BMC stalls past depth ~20 on data-path properties (M2: every BMC tested, rIC3's included) | IC3 portfolio from t=0 (proved the 8×8 FIFO in 9.8 s; found a depth-18 bug 6× faster); simulation-seeded BMC in v2 |
+| BMC stalls past depth ~20 on data-path properties (M2: every BMC tested, rIC3's included) | Random simulation first (M3: 16/32-deep FIFO bugs in 3–90 ms); IC3 portfolio from t=0; simulation-seeded BMC in v2 |
+| Simulation CEXs are long (hundreds of cycles) and BMC cannot shorten deep ones in time | v2: trace shortening (drop or merge cycles and re-check by simulation), then BMC from a late state of the trace |
+| Random simulation is useless if reset is left unconstrained (it resets constantly) | Default is JasperGold-style reset held inactive after cycle 0; `--reset-free` is opt-in (M3) |
 | A bounded "pass" read as meaningful for liveness (M0: EBMC reports false liveness properties as "PROVED up to bound 20") | Liveness is `UNSUPPORTED` in v1; v2 requires lasso or liveness-to-safety with a CEX-capable engine |
 | rIC3 license ambiguity (BSD-3 vs GPL-3) | Invoke it only as an external process; resolve before any bundling |
 | SVA semantic bugs in our compiler | Three oracles: EBMC bidirectional bounded equivalence, Verilator random differential, hand-derived golden tests; RTL replay on every trace. **The reference tools themselves deviate from the LRM** (M1: EBMC on mid-attempt `disable iff`; Verilator on failure timing and ranged antecedents), so disagreements are resolved against the LRM, not against a tool |

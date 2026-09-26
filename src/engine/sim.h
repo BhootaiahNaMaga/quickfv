@@ -17,8 +17,11 @@ struct SimTrace {
 
 /// Simulates the trace; returns, per frame, the indices of properties whose
 /// bad signal is true, and whether every constraint held in every frame.
-std::vector<std::vector<size_t>> simulate(const TransitionSystem& ts, const SimTrace& trace,
-                                          bool& constraintsHeld);
+/// If `latchValues` is given, it receives [frame][latch][bit] register values
+/// at the start of each frame.
+std::vector<std::vector<size_t>> simulate(
+    const TransitionSystem& ts, const SimTrace& trace, bool& constraintsHeld,
+    std::vector<std::vector<std::vector<int8_t>>>* latchValues = nullptr);
 
 /// Parses a BTOR2 witness (the btorsim format) into a trace.
 bool parseWitness(const std::string& path, const TransitionSystem& ts, SimTrace& trace,

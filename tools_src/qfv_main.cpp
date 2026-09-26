@@ -16,17 +16,22 @@
 // design or assertion, 2 usage or tool error.
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <map>
+#include <mutex>
 #include <set>
+#include <sstream>
 
 #include "json.h"
 #include "lint.h"
 #include "session.h"
 #include "slang/diagnostics/DiagnosticEngine.h"
 #include "slang/text/SourceManager.h"
-#include "engine/bmc.h"
+#include "engine/external.h"
+#include "engine/hunt.h"
 #include "engine/sim.h"
+#include "engine/trace.h"
 #include "model/ts.h"
 #include "sva/lower.h"
 #include "sva/monitor.h"
@@ -53,6 +58,9 @@ struct Args {
     bool resetFree = false; // leave reset unconstrained after the first cycle
     double budget = 600;
     int maxDepth = 1 << 30;
+    double simSeconds = 0.25;
+    bool replay = false;    // re-run every trace on the RTL in Verilator
+    bool noRic3 = false;    // do not use rIC3 to prove vacuity
 };
 
 [[noreturn]] void usage(const std::string& msg) {
@@ -109,6 +117,12 @@ Args parseArgs(int argc, char** argv) {
             a.budget = std::stod(next());
         else if (s == "--max-depth")
             a.maxDepth = std::stoi(next());
+        else if (s == "--sim")
+            a.simSeconds = std::stod(next());
+        else if (s == "--replay")
+            a.replay = true;
+        else if (s == "--no-ric3")
+            a.noRic3 = true;
         else if (s.rfind("-", 0) == 0)
             usage("unknown option " + s);
         else
@@ -169,8 +183,10 @@ struct CompileResult {
 
 /// Lowers every supported assertion to a monitor and writes rewritten sources
 /// to `outDir`. Unchanged files are referenced in place.
+/// With `lower` false, supported assertions keep their original SVA text and
+/// only unsupported ones are dropped (used for independent RTL replay).
 CompileResult compileSva(Session& session, const std::string& outDir, bool dropUnsupported,
-                         bool vacuityCovers) {
+                         bool vacuityCovers, bool reachAsBad = false, bool lower = true) {
     CompileResult res;
     auto t0 = std::chrono::steady_clock::now();
     auto comp = session.compile();
@@ -186,11 +202,13 @@ CompileResult compileSva(Session& session, const std::string& outDir, bool dropU
     std::map<uint32_t, std::vector<Repl>> repls;
     sva::MonitorOptions mo;
     mo.vacuityCover = vacuityCovers;
+    mo.reachAsBad = reachAsBad;
     for (auto& s : res.sites) {
         auto r = s.replaceRange;
         if (s.supported) {
-            repls[r.start().buffer().getId()].push_back(
-                {r.start().offset(), r.end().offset(), sva::emitMonitor(s.ir, mo)});
+            if (lower)
+                repls[r.start().buffer().getId()].push_back(
+                    {r.start().offset(), r.end().offset(), sva::emitMonitor(s.ir, mo)});
         }
         else {
             res.unsupported++;
@@ -373,18 +391,93 @@ std::string yosysScript(const Args& a, const std::vector<std::string>& files,
            "write_btor " + btorPath + "\n";
 }
 
+std::string toolPath(const char* env, const char* fallback) {
+    const char* v = std::getenv(env);
+    return v ? v : fallback;
+}
+
+std::string runCapture(const std::string& cmd) {
+    std::string out;
+    FILE* p = popen((cmd + " 2>&1").c_str(), "r");
+    if (!p)
+        return out;
+    char buf[4096];
+    while (size_t n = fread(buf, 1, sizeof(buf), p))
+        out.append(buf, n);
+    pclose(p);
+    return out;
+}
+
+/// btorsim (Btor2Tools) replays the BTOR2 witness and must reach exactly this
+/// property in exactly this frame.
+std::string certifyBtorsim(const std::string& btor, const std::string& wit, size_t prop, int depth) {
+    auto out = runCapture(toolPath("QFV_BTORSIM", "btorsim") + " -v -c " + btor + " " + wit);
+    std::string want = "b" + std::to_string(prop) + "@" + std::to_string(depth);
+    auto pos = out.find("reached bad state properties {");
+    if (pos == std::string::npos)
+        return out.find("not found") != std::string::npos ? "unavailable" : "not-reproduced";
+    auto end = out.find('}', pos);
+    auto reached = " " + out.substr(pos + 30, end - pos - 30) + " ";
+    return reached.find(" " + want + " ") != std::string::npos ? "confirmed" : "not-reproduced";
+}
+
+/// Verilator replays the trace on SV sources and must report `expectFail`
+/// (an assertion label) failing.
+std::string certifyReplay(const Args& args, const std::string& tb, const std::vector<std::string>& files,
+                          const std::string& expectFail, const std::string& dir) {
+    std::string defs;
+    for (auto& d : args.session.defines)
+        defs += " -D" + d;
+    std::string srcs;
+    for (auto& f : files)
+        srcs += " " + f;
+    auto obj = dir + "/obj";
+    fs::create_directories(dir);
+    auto build = runCapture("rm -rf " + obj + " && " + toolPath("QFV_VERILATOR", "verilator") +
+                            " --binary --timing --assert -Wno-fatal -Wno-lint -Wno-style"
+                            " --top-module qfv_replay -Mdir " + obj + " -o sim" + defs + " " + tb + srcs);
+    if (!fs::exists(obj + "/sim")) {
+        std::ofstream(dir + "/build.log") << build;
+        return "replay-build-error (see " + dir + "/build.log)";
+    }
+    // Keep going after the first failure: several assertions may fail together.
+    auto out = runCapture(obj + "/sim +verilator+error+limit+100000");
+    // Verilator prints "Assertion failed in <hier.path.label>" per failure.
+    bool other = false;
+    for (size_t at = 0; (at = out.find("Assertion failed in ", at)) != std::string::npos;) {
+        at += 20;
+        auto name = out.substr(at, out.find_first_of(":' \n", at) - at);
+        if (name.size() >= expectFail.size() + 1 &&
+            name.compare(name.size() - expectFail.size() - 1, std::string::npos, "." + expectFail) == 0)
+            return "confirmed";
+        other = true;
+    }
+    return other ? "other-assertion-failed" : "not-reproduced";
+}
+
 int cmdBmc(Session& session, const Args& args) {
     auto t0 = std::chrono::steady_clock::now();
-    auto emit = [](JsonWriter& w) { std::cout << w.str() << "\n" << std::flush; };
-    std::string work = args.workDir.empty() ? "qfv_work" : args.workDir;
+    std::mutex outMutex;
+    auto emit = [&](JsonWriter& w) {
+        std::lock_guard lock(outMutex);
+        std::cout << w.str() << "\n" << std::flush;
+    };
+    // RTL replays take seconds (a Verilator build each), so they run in the
+    // background while the search continues, and report as separate events.
+    std::vector<std::future<void>> replays;
+    std::string work = fs::absolute(args.workDir.empty() ? "qfv_work" : args.workDir).string();
     fs::create_directories(work);
     std::string btor = args.btor;
     double frontMs = 0;
+    std::vector<std::string> compiledFiles;
+    std::vector<std::string> replayFiles; // original SVA; unsupported assertions dropped
+    std::vector<sva::AssertionSite> sites;
 
     if (btor.empty()) {
         if (args.session.top.empty())
             usage("bmc needs --top");
-        auto res = compileSva(session, work + "/src", /*dropUnsupported=*/true, false);
+        auto res = compileSva(session, work + "/src", /*dropUnsupported=*/true,
+                              /*vacuityCovers=*/true, /*reachAsBad=*/true);
         if (hasErrors(res.diags)) {
             JsonWriter w;
             w.beginObject().field("event", "error").field("stage", "elaborate");
@@ -402,26 +495,26 @@ int cmdBmc(Session& session, const Args& args) {
             w.endObject();
             emit(w);
         }
+        compiledFiles = res.files;
+        sites = res.sites;
+        if (args.replay)
+            replayFiles = compileSva(session, work + "/replay_src", true, false, false,
+                                     /*lower=*/false).files;
         auto files = res.files;
         if (!args.resetExpr.empty()) {
-            auto envPath = fs::absolute(fs::path(work) / "qfv_env.sv").string();
+            auto envPath = work + "/qfv_env.sv";
             std::ofstream(envPath) << resetEnv(args);
             files.push_back(envPath);
+            compiledFiles.push_back(envPath);
         }
-        btor = fs::absolute(fs::path(work) / "model.btor").string();
-        auto ys = fs::path(work) / "model.ys";
+        btor = work + "/model.btor";
+        auto ys = work + "/model.ys";
         std::ofstream(ys) << yosysScript(args, files, btor);
-        const char* yosysEnv = std::getenv("QFV_YOSYS");
-        std::string yosys = yosysEnv ? yosysEnv : "yosys";
-        std::string cmd = yosys + " -q -m slang -l " + (fs::path(work) / "yosys.log").string() +
-                          " -s " + ys.string() + " > /dev/null 2>&1";
+        std::string cmd = toolPath("QFV_YOSYS", "yosys") + " -q -m slang -l " + work +
+                          "/yosys.log -s " + ys + " > /dev/null 2>&1";
         if (std::system(cmd.c_str()) != 0) {
             JsonWriter w;
-            w.beginObject()
-                .field("event", "error")
-                .field("stage", "yosys")
-                .field("log", (fs::path(work) / "yosys.log").string())
-                .endObject();
+            w.beginObject().field("event", "error").field("stage", "yosys").field("log", work + "/yosys.log").endObject();
             emit(w);
             return 2;
         }
@@ -455,25 +548,100 @@ int cmdBmc(Session& session, const Args& args) {
         emit(w);
     }
 
-    BmcOptions bo;
-    bo.budgetSeconds = args.budget;
-    bo.maxDepth = args.maxDepth;
-    Bmc bmc(ts, bo);
-    int cexCount = 0;
-    auto results = bmc.run([&](size_t p, const PropResult& r) {
+    HuntOptions ho;
+    ho.budgetSeconds = args.budget;
+    ho.maxDepth = args.maxDepth;
+    ho.simSeconds = args.simSeconds;
+    if (!args.noRic3) {
+        // rIC3 (IC3) proves reachability goals unreachable: invariants that
+        // k-induction cannot find. Run as a subprocess on a one-goal BTOR2.
+        auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(int64_t(args.budget * 1000));
+        ho.externalProverName = "rIC3-ic3";
+        ho.externalProver = [&, deadline](size_t p, const std::atomic<bool>& cancel) -> std::string {
+            auto single = work + "/goal_" + std::to_string(p) + ".btor";
+            if (!writeSingleBadBtor2(btor, single, ts.props[p].btorId))
+                return "";
+            auto r = runProcess({toolPath("QFV_RIC3", "rIC3"), "-e", "ic3", single}, deadline, cancel);
+            std::ofstream(work + "/goal_" + std::to_string(p) + ".log")
+                << (r.finished ? "finished, exit " + std::to_string(r.exitCode) : "killed") << "\n"
+                << r.output;
+            if (!r.finished)
+                return "";
+            // The verdict is a line of its own ("UNSAT"/"SAT"); logs go to stderr,
+            // which runProcess merges in.
+            std::istringstream lines(r.output);
+            for (std::string line; std::getline(lines, line);) {
+                if (line == "UNSAT")
+                    return "UNREACHABLE";
+                if (line == "SAT")
+                    return "REACHABLE";
+            }
+            return "";
+        };
+    }
+    Hunt hunt(ts, ho);
+    ReplayOptions ro;
+    ro.top = args.session.top;
+    ro.clock = args.clock;
+
+    auto results = hunt.run([&](size_t p, const Verdict& r) {
+        auto& prop = ts.props[p];
         JsonWriter w;
         w.beginObject()
             .field("event", "result")
-            .field("property", ts.props[p].name)
+            .field("assertion", prop.label)
+            .field("goal", prop.kind == TransitionSystem::Property::Kind::Assert ? "no-failure"
+                           : prop.isTrigger                                     ? "trigger-reachable"
+                                                                                : "cover")
             .field("status", r.status)
+            .field("engine", r.engine)
             .field("ms", r.ms);
         if (r.cex) {
-            cexCount++;
-            auto path = (fs::path(work) / ("cex_" + std::to_string(p) + ".wit")).string();
-            std::ofstream(path) << btor2Witness(ts, p, *r.cex);
-            w.field("depth", r.cex->depth)
-                .field("length", r.cex->depth + 1)
-                .field("witness", fs::absolute(path).string());
+            // One file set per trace: a shortened trace must not overwrite the
+            // files a background replay of the longer one is still using.
+            std::string base = work + "/trace_" + prop.label + (prop.isTrigger ? "_trigger" : "") +
+                               "_len" + std::to_string(r.cex->depth + 1);
+            std::ofstream(base + ".wit") << btor2Witness(ts, p, *r.cex);
+            std::ofstream(base + ".json") << jsonTrace(ts, p, *r.cex, args.clock);
+            std::ofstream(base + ".vcd") << vcdTrace(ts, *r.cex, args.clock);
+            std::ofstream(base + "_tb.sv") << replayTestbench(ts, *r.cex, ro);
+            w.field("length", r.cex->depth + 1).field("minimized", r.minimized);
+            w.key("trace").beginObject()
+                .field("json", base + ".json")
+                .field("vcd", base + ".vcd")
+                .field("witness", base + ".wit")
+                .field("testbench", base + "_tb.sv")
+                .endObject();
+            w.key("certified").beginObject();
+            w.field("btorsim", certifyBtorsim(btor, base + ".wit", p, r.cex->depth));
+            if (args.replay && args.btor.empty()) {
+                bool isAssert = prop.kind == TransitionSystem::Property::Kind::Assert;
+                // Asserts replay on the ORIGINAL SVA (independent of our compiler);
+                // reachability goals only exist in the compiled monitors.
+                auto files = isAssert ? replayFiles : compiledFiles;
+                auto expect = isAssert ? prop.label : prop.name.substr(prop.name.rfind('.') + 1);
+                auto dir = base + "_replay";
+                std::string what = isAssert ? "rtl_replay" : "monitor_replay";
+                std::string label = prop.label;
+                int length = r.cex->depth + 1;
+                w.field(what, "pending");
+                replays.push_back(std::async(std::launch::async, [=, &args, &emit] {
+                    auto verdict = certifyReplay(args, base + "_tb.sv", files, expect, dir);
+                    JsonWriter c;
+                    c.beginObject()
+                        .field("event", "certified")
+                        .field("assertion", label)
+                        .field("length", length)
+                        .field(what, verdict)
+                        .endObject();
+                    emit(c);
+                }));
+            }
+            w.endObject();
+        }
+        else if (r.status == "UNREACHABLE") {
+            w.field("induction_k", r.inductionK);
         }
         else {
             w.field("depth_reached", r.depthChecked).field("note", "bounded: not a proof");
@@ -481,17 +649,74 @@ int cmdBmc(Session& session, const Args& args) {
         w.endObject();
         emit(w);
     });
+
+    for (auto& f : replays)
+        f.wait();
+
+    // One verdict per assertion (SPEC section 4.2).
+    std::map<std::string, std::pair<const Verdict*, const Verdict*>> byLabel; // (assert, trigger)
+    for (size_t p = 0; p < ts.props.size(); p++) {
+        auto& e = byLabel[ts.props[p].label];
+        if (ts.props[p].kind == TransitionSystem::Property::Kind::Assert)
+            e.first = &results[p];
+        else if (ts.props[p].isTrigger)
+            e.second = &results[p];
+    }
+    // Assertions (or triggers) that synthesis folded to a constant are no longer
+    // in the model: a missing trigger is constant false (vacuous by construction);
+    // a missing assertion with no trigger can never fail.
+    std::map<std::string, std::string> folded;
+    for (auto& s : sites) {
+        if (!s.supported || s.ir.kind != sva::DirectiveKind::Assert)
+            continue;
+        auto& e = byLabel[s.label.empty() ? s.ir.label : s.label];
+        bool hasTrigger = !s.ir.ante.elems.empty();
+        std::string label = s.label.empty() ? s.ir.label : s.label;
+        if (hasTrigger && !e.second) {
+            folded[label] = "VACUOUS";
+            JsonWriter w;
+            w.beginObject().field("event", "result").field("assertion", label)
+                .field("goal", "trigger-reachable").field("status", "UNREACHABLE")
+                .field("engine", "synthesis")
+                .field("note", "the trigger is constant false after synthesis").endObject();
+            emit(w);
+        }
+        else if (!hasTrigger && !e.first) {
+            folded[label] = "TRIVIALLY_TRUE";
+            JsonWriter w;
+            w.beginObject().field("event", "result").field("assertion", label)
+                .field("goal", "no-failure").field("status", "TRIVIALLY_TRUE")
+                .field("engine", "synthesis")
+                .field("note", "the assertion cannot fail: constant true after synthesis").endObject();
+            emit(w);
+        }
+    }
+
+    int cex = 0;
     JsonWriter w;
-    w.beginObject()
-        .field("event", "summary")
-        .field("ms", msSince(t0))
-        .field("cex", cexCount)
-        .field("pass_bounded", int(results.size()) - cexCount)
-        .field("sat_vars", uint64_t(bmc.numVars()))
-        .field("sat_clauses", uint64_t(bmc.numClauses()))
-        .endObject();
+    w.beginObject().field("event", "summary").field("ms", msSince(t0)).field("sim_cycles", hunt.simCycles);
+    w.key("verdicts").beginObject();
+    for (auto& [label, pr] : byLabel) {
+        auto [as, tr] = pr;
+        std::string verdict;
+        if (folded.count(label))
+            verdict = folded[label];
+        else if (as && as->status == "CEX")
+            verdict = "CEX";
+        else if (tr && tr->status == "UNREACHABLE")
+            verdict = "VACUOUS";
+        else if (tr && tr->status == "NOT_REACHED")
+            verdict = "POSSIBLY_VACUOUS";
+        else if (as)
+            verdict = "PASS_BOUNDED";
+        else
+            verdict = tr ? tr->status : "?";
+        cex += verdict == "CEX";
+        w.field(label, verdict);
+    }
+    w.endObject().endObject();
     emit(w);
-    return cexCount ? 1 : 0;
+    return cex ? 1 : 0;
 }
 
 /// Replays a BTOR2 witness on our bit-blasted model; prints the reached bad

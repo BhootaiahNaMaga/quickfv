@@ -4,7 +4,7 @@ same BTOR2, for larger FIFOs (DEPTH x 8-bit). Every CEX is checked with btorsim.
 
 Usage: tests/bench_fifo_scale.py [--depths 8 16 32] [--timeout 60]
 """
-import argparse, json, os, subprocess, sys, time
+import argparse, json, os, signal, subprocess, sys, time
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(ROOT, "tests"))
@@ -16,12 +16,18 @@ CASE = os.path.join(ROOT, "casestudy", "m0_fifo")
 
 
 def timed(cmd, timeout):
+    """Runs cmd in its own session and kills the whole process group on timeout:
+    bin/rIC3 is a wrapper script, and killing only it orphans the real prover."""
     t0 = time.time()
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         start_new_session=True,
+                         env={**os.environ, "PATH": BIN + ":" + os.environ["PATH"]})
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                           env={**os.environ, "PATH": BIN + ":" + os.environ["PATH"]})
-        return r.stdout, time.time() - t0
+        out, _ = p.communicate(timeout=timeout)
+        return out, time.time() - t0
     except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.communicate()
         return "TIMEOUT", timeout
 
 

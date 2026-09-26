@@ -92,7 +92,8 @@ public:
                     latch.cur = bits;
                     latch.next = bits; // no next: keeps its value
                     latch.init.assign(bits.size(), -1);
-                    latch.synthetic = name.empty() || name.find('$') != std::string::npos;
+                    latch.synthetic = name.empty() || name.find('$') != std::string::npos ||
+                                      name.find("qfv_") != std::string::npos;
                     latchIndex[l->id] = ts.latches.size();
                     ts.latches.push_back(std::move(latch));
                 }
@@ -119,10 +120,27 @@ public:
                 case BTOR2_TAG_next:
                     ts.latches.at(latchIndex.at(l->args[0])).next = arg(l, 1);
                     break;
-                case BTOR2_TAG_bad:
-                    ts.props.push_back({l->symbol ? l->symbol : "bad_" + std::to_string(l->id), l->id,
-                                        arg(l, 0).at(0)});
+                case BTOR2_TAG_bad: {
+                    TransitionSystem::Property prop;
+                    prop.name = l->symbol ? l->symbol : "bad_" + std::to_string(l->id);
+                    prop.btorId = l->id;
+                    prop.bad = arg(l, 0).at(0);
+                    // Leaf label, then the qfv reachability prefixes (see sva/monitor.h).
+                    std::string leaf = prop.name.substr(prop.name.rfind('.') == std::string::npos
+                                                            ? 0
+                                                            : prop.name.rfind('.') + 1);
+                    for (auto [prefix, trigger] : {std::pair{"qfv_trigger__", true},
+                                                   std::pair{"qfv_cover__", false}}) {
+                        if (leaf.rfind(prefix, 0) == 0) {
+                            prop.kind = TransitionSystem::Property::Kind::Reach;
+                            prop.isTrigger = trigger;
+                            leaf = leaf.substr(std::string(prefix).size());
+                        }
+                    }
+                    prop.label = leaf;
+                    ts.props.push_back(prop);
                     break;
+                }
                 case BTOR2_TAG_constraint: ts.constraints.push_back(arg(l, 0).at(0)); break;
                 case BTOR2_TAG_fair:
                 case BTOR2_TAG_justice:
